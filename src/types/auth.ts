@@ -18,6 +18,7 @@ export interface UserProfile {
 export interface UserUsage {
   user_id: string;
   exports_count: number;
+  is_unlimited?: boolean;
   created_at: string;
   updated_at?: string;
 }
@@ -35,4 +36,6 @@ export interface AuthContextType {
   resendVerificationEmail: (email: string) => Promise<AuthResponse>;
   trackExport: () => Promise<void>;
   refreshUsage: () => Promise<void>;
+  resetPasswordForEmail: (email: string) => Promise<AuthResponse>;
+  updatePassword: (newPassword: string) => Promise<AuthResponse>;
 }

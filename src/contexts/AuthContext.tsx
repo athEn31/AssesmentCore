@@ -43,6 +43,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       setUser(session?.user || null);
 
+      // Redirect to reset password page when user clicks the email link
+      if (event === 'PASSWORD_RECOVERY') {
+        window.location.href = '/auth/reset-password';
+        return;
+      }
+
       if (session?.user) {
         const profile = await authService.getUserProfile(session.user.id);
         setUserProfile(profile);
@@ -128,6 +134,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const resetPasswordForEmail = async (email: string): Promise<AuthResponse> => {
+    return authService.resetPasswordForEmail(email);
+  };
+
+  const updatePassword = async (newPassword: string): Promise<AuthResponse> => {
+    return authService.updatePassword(newPassword);
+  };
+
   const value: AuthContextType = {
     user,
     loading,
@@ -141,6 +155,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     resendVerificationEmail,
     trackExport,
     refreshUsage,
+    resetPasswordForEmail,
+    updatePassword,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -148,6 +148,13 @@ export function LoginPage() {
             </Button>
           </form>
 
+          {/* Forgot Password Link */}
+          <div className="text-center">
+            <Link to="/auth/forgot-password" className="text-sm text-[#0F6CBD] hover:underline font-medium">
+              Forgot your password?
+            </Link>
+          </div>
+
           {/* Register Link */}
           <div className="text-center">
             <p className="text-sm text-[#64748B]">

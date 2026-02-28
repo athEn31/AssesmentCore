@@ -1,11 +1,11 @@
 ﻿import { useState } from "react";
 import { Link } from "react-router";
-import { 
-  Menu, 
-  X, 
-  Zap, 
-  FileJson, 
-  RefreshCw, 
+import {
+  Menu,
+  X,
+  Zap,
+  FileJson,
+  RefreshCw,
   CheckCircle2,
   Mail,
   MapPin,
@@ -35,7 +35,7 @@ export function LandingPage() {
                 <FileCode className="w-5 h-5 text-white" />
               </div>
               <span className="text-xl font-semibold text-white">
-                AssessmentCore
+                AssesmentCore
               </span>
             </div>
 
@@ -95,7 +95,7 @@ export function LandingPage() {
               </span>
             </h1>
             <p className="text-xl text-[#475569] mb-8">
-              Empower your EdTech platform with seamless batch conversion of assessment questions 
+              Empower your EdTech platform with seamless batch conversion of assessment questions
               into QTI and JSON formats. Built for small EdTech platforms that need speed and reliability.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
@@ -163,13 +163,13 @@ export function LandingPage() {
                 About AssessmentCore
               </h2>
               <p className="text-lg text-[#475569] mb-6">
-                We specialize in helping small EdTech platforms streamline their assessment 
-                workflow by converting questions into standardized formats. Our mission is to 
+                We specialize in helping small EdTech platforms streamline their assessment
+                workflow by converting questions into standardized formats. Our mission is to
                 make educational content more accessible and portable.
               </p>
               <p className="text-lg text-[#475569] mb-6">
-                Founded by educators and developers, AssessmentCore understands the unique 
-                challenges faced by emerging EdTech companies. We provide enterprise-grade 
+                Founded by educators and developers, AssessmentCore understands the unique
+                challenges faced by emerging EdTech companies. We provide enterprise-grade
                 conversion tools at prices that make sense for growing platforms.
               </p>
               <div className="space-y-4">
@@ -240,7 +240,7 @@ export function LandingPage() {
                 </div>
                 <CardTitle>QTI Conversion</CardTitle>
                 <CardDescription className="text-base">
-                  Convert your questions into QTI 2.1 or 3.0 format with full compliance 
+                  Convert your questions into QTI 2.1 or 3.0 format with full compliance
                   and validation. Perfect for LMS integration.
                 </CardDescription>
               </CardHeader>
@@ -253,7 +253,7 @@ export function LandingPage() {
                 </div>
                 <CardTitle>JSON Export</CardTitle>
                 <CardDescription className="text-base">
-                  Export to clean, structured JSON format ready for API integration 
+                  Export to clean, structured JSON format ready for API integration
                   in your web or mobile applications.
                 </CardDescription>
               </CardHeader>
@@ -266,7 +266,7 @@ export function LandingPage() {
                 </div>
                 <CardTitle>Batch Processing</CardTitle>
                 <CardDescription className="text-base">
-                  Upload and convert thousands of questions at once. Save time 
+                  Upload and convert thousands of questions at once. Save time
                   with our intelligent batch processing system.
                 </CardDescription>
               </CardHeader>
@@ -279,7 +279,7 @@ export function LandingPage() {
                 </div>
                 <CardTitle>Format Migration</CardTitle>
                 <CardDescription className="text-base">
-                  Migrate between different question formats seamlessly. We handle 
+                  Migrate between different question formats seamlessly. We handle
                   the complexity so you don't have to.
                 </CardDescription>
               </CardHeader>
@@ -292,7 +292,7 @@ export function LandingPage() {
                 </div>
                 <CardTitle>QTI Rendering</CardTitle>
                 <CardDescription className="text-base">
-                  Preview and validate your QTI questions with our built-in 
+                  Preview and validate your QTI questions with our built-in
                   renderer before deploying to production.
                 </CardDescription>
               </CardHeader>
@@ -305,7 +305,7 @@ export function LandingPage() {
                 </div>
                 <CardTitle>Custom Solutions</CardTitle>
                 <CardDescription className="text-base">
-                  Need something specific? We offer custom conversion solutions 
+                  Need something specific? We offer custom conversion solutions
                   tailored to your unique requirements.
                 </CardDescription>
               </CardHeader>
@@ -458,54 +458,54 @@ export function LandingPage() {
         <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
             <div>
-            <h2 className="text-4xl font-bold text-[#111827] mb-6">Get in Touch</h2>
-            <p className="text-lg text-[#475569] mb-8">
-              Have questions? We'd love to hear from you. Send us a message and 
-              we'll respond as soon as possible.
-            </p>
+              <h2 className="text-4xl font-bold text-[#111827] mb-6">Get in Touch</h2>
+              <p className="text-lg text-[#475569] mb-8">
+                Have questions? We'd love to hear from you. Send us a message and
+                we'll respond as soon as possible.
+              </p>
 
-            <div className="space-y-6">
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 bg-[#F1F5F9] rounded-lg flex items-center justify-center flex-shrink-0">
-                  <Mail className="w-6 h-6 text-[#0F6CBD]" />
+              <div className="space-y-6">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-[#F1F5F9] rounded-lg flex items-center justify-center flex-shrink-0">
+                    <Mail className="w-6 h-6 text-[#0F6CBD]" />
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-[#111827] mb-1">Email</h4>
+                    <p className="text-[#475569]">info@assesmentcore.com</p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="font-semibold text-[#111827] mb-1">Email</h4>
-                  <p className="text-[#475569]">info@assesmentcore.com</p>
-                </div>
-              </div>
 
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 bg-[#F1F5F9] rounded-lg flex items-center justify-center flex-shrink-0">
-                  <Phone className="w-6 h-6 text-[#0F6CBD]" />
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-[#F1F5F9] rounded-lg flex items-center justify-center flex-shrink-0">
+                    <Phone className="w-6 h-6 text-[#0F6CBD]" />
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-[#111827] mb-1">Phone</h4>
+                    <p className="text-[#475569]">+1 (555) 123-4567</p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="font-semibold text-[#111827] mb-1">Phone</h4>
-                  <p className="text-[#475569]">+1 (555) 123-4567</p>
-                </div>
-              </div>
 
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 bg-[#F1F5F9] rounded-lg flex items-center justify-center flex-shrink-0">
-                  <MapPin className="w-6 h-6 text-[#0F6CBD]" />
-                </div>
-                <div>
-                  <h4 className="font-semibold text-[#111827] mb-1">Office</h4>
-                  <p className="text-[#475569]">
-                    123 EdTech Avenue<br />
-                    San Francisco, CA 94105
-                  </p>
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-[#F1F5F9] rounded-lg flex items-center justify-center flex-shrink-0">
+                    <MapPin className="w-6 h-6 text-[#0F6CBD]" />
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-[#111827] mb-1">Office</h4>
+                    <p className="text-[#475569]">
+                      123 EdTech Avenue<br />
+                      San Francisco, CA 94105
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          <Card className="border border-[#E2E8F0]">
-            <CardHeader>
-              <CardTitle>Send us a Message</CardTitle>
-              <CardDescription>
-                Fill out the form below and we'll get back to you shortly
-              </CardDescription>
+            <Card className="border border-[#E2E8F0]">
+              <CardHeader>
+                <CardTitle>Send us a Message</CardTitle>
+                <CardDescription>
+                  Fill out the form below and we'll get back to you shortly
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <form className="space-y-4">
@@ -533,14 +533,14 @@ export function LandingPage() {
                     <label htmlFor="message" className="block text-sm font-medium text-[#334155] mb-2">
                       Message
                     </label>
-                    <Textarea 
-                      id="message" 
-                      placeholder="Tell us more about your needs..." 
+                    <Textarea
+                      id="message"
+                      placeholder="Tell us more about your needs..."
                       className="min-h-[120px]"
                     />
                   </div>
-                  <Button 
-                    type="submit" 
+                  <Button
+                    type="submit"
                     className="w-full bg-[#0F6CBD] hover:bg-[#0B5A9A] active:bg-[#094A7F] text-white rounded-md"
                   >
                     Send Message

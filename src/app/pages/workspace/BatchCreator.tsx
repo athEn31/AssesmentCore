@@ -77,7 +77,7 @@ export function BatchCreator() {
   const [editedRows, setEditedRows] = useState<Record<string, any>[]>([]);
 
   // Check if free quota is exhausted
-  const canUseFeature = !userUsage || userUsage.exports_count === 0;
+  const canUseFeature = !userUsage || userUsage.exports_count === 0 || userUsage.is_unlimited;
 
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -96,6 +96,8 @@ export function BatchCreator() {
 
         // Detect columns
         const detected = detectQuestionColumns(parsed.columns);
+        console.log('Detected column mapping:', detected);
+        console.log('Available columns:', parsed.columns);
         setColumnMapping(detected);
         setEditedRows([...parsed.rows]);
 
@@ -151,13 +153,19 @@ export function BatchCreator() {
         try {
           if (questionType === 'mcq') {
             // Use the production QTI builder for MCQ
+            const optionValues = columnMapping.optionCols
+              ?.map((col: string) => row[col])
+              .filter((v: any) => v !== null && v !== undefined && v !== '') || [];
+
+            console.log('MCQ Export - Options:', optionValues, 'from cols:', columnMapping.optionCols);
+
             const qtiQuestion: QTIQuestion = {
               id: row.id || `q-${Date.now()}`,
               upload_id: 'batch-export',
               identifier: (row[columnMapping.questionCol] as string)?.substring(0, 50) || `q-${row.id}`,
               stem: (row[columnMapping.questionCol] as string) || '',
               type: 'MCQ',
-              options: columnMapping.optionCols?.map((col: string) => row[col] || '') || [],
+              options: optionValues.map((v: any) => String(v)),
               correct_answer: (row[columnMapping.answerCol] as string) || 'A',
               validation_status: (validationResult?.status as string) === 'valid' ? 'Valid' : 'Caution',
             };
@@ -390,7 +398,11 @@ export function BatchCreator() {
               <AlertTriangle className="h-4 w-4 text-[#D97706]" />
               <AlertTitle className="text-[#1F2937]">Quota Reached</AlertTitle>
               <AlertDescription className="text-[#475569] text-sm">
-                You have {userUsage?.exports_count || 0} export(s) this month. Upgrade to continue using Batch Creator.
+                {userUsage?.is_unlimited ? (
+                  "You have unlimited exports."
+                ) : (
+                  `You have ${userUsage?.exports_count || 0} export(s) this month. Upgrade to continue using Batch Creator.`
+                )}
               </AlertDescription>
             </Alert>
 
@@ -440,7 +452,13 @@ export function BatchCreator() {
           <div>
             <h1 className="text-2xl font-bold text-[#111827]">Batch QTI Creator</h1>
             <p className="text-[#475569] mt-1">Convert multiple questions to QTI format in one go</p>
-            <p className="text-xs text-[#94A3B8] mt-2">Free trial - {userUsage?.exports_count === 0 ? '1' : '0'} export(s) remaining this month</p>
+            <p className="text-xs text-[#94A3B8] mt-2">
+              {userUsage?.is_unlimited ? (
+                "Unlimited exports enabled"
+              ) : (
+                `Free trial - ${userUsage?.exports_count === 0 ? '1' : '0'} export(s) remaining this month`
+              )}
+            </p>
           </div>
           <div className="flex gap-2">
             {fileData && (

@@ -139,12 +139,16 @@ export function detectQuestionColumns(columns: string[]): {
   // Detect option columns (A-H or Option 1-8, etc.)
   const optionCols: string[] = [];
   columns.forEach(col => {
-    const lower = col.toLowerCase().trim();
+    const trimmed = col.trim();
     if (
-      /^option\s*[a-h]$/i.test(col) ||
-      /^[a-h]\s*$/.test(col) ||
-      /^option\s*[1-8]$/i.test(col) ||
-      /^[1-8]\s*$/.test(col)
+      /^option[\s_-]*[a-h]$/i.test(trimmed) ||
+      /^opt[\s_-]*[a-h]$/i.test(trimmed) ||
+      /^choice[\s_-]*[a-h]$/i.test(trimmed) ||
+      /^[a-h]$/i.test(trimmed) ||
+      /^option[\s_-]*[1-8]$/i.test(trimmed) ||
+      /^opt[\s_-]*[1-8]$/i.test(trimmed) ||
+      /^choice[\s_-]*[1-8]$/i.test(trimmed) ||
+      /^[1-8]$/.test(trimmed)
     ) {
       optionCols.push(col);
     }

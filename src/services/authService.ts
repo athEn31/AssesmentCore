@@ -256,4 +256,50 @@ export const authService = {
       };
     }
   },
+
+  // Send password reset email
+  async resetPasswordForEmail(email: string): Promise<AuthResponse> {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/auth/reset-password`,
+      });
+
+      if (error) {
+        return { success: false, error: error.message };
+      }
+
+      return {
+        success: true,
+        message: 'Password reset email sent! Please check your inbox.',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to send reset email',
+      };
+    }
+  },
+
+  // Update user password (after reset)
+  async updatePassword(newPassword: string): Promise<AuthResponse> {
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        return { success: false, error: error.message };
+      }
+
+      return {
+        success: true,
+        message: 'Password updated successfully!',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to update password',
+      };
+    }
+  },
 };
