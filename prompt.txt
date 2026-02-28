@@ -1,0 +1,165 @@
+
+> I am building Stage 1 of a QTI generation engine.
+>
+> Tech stack:
+>
+> * Next.js (App Router)
+> * TypeScript
+> * Supabase (PostgreSQL)
+> * Backend API route
+>
+> Goal:
+> Implement a production-ready QTI 2.1 MCQ generation engine.
+>
+> Scope of Stage 1:
+>
+> * Only QTI 2.1
+> * Only MCQ question type
+> * No user-uploaded templates (use internal template)
+> * Server-side generation only
+> * Store generated XML in Supabase
+>
+> Database:
+> I already have a `questions` table with:
+>
+> * id
+> * upload_id
+> * identifier
+> * stem
+> * type
+> * options (jsonb array)
+> * correct_answer
+> * validation_status
+> * generated_output
+> * generation_status
+> * generation_errors
+>
+> Requirements:
+>
+> 1️⃣ Create clean folder structure:
+>
+> /engine
+> /builders
+> /qti21
+> mcqBuilder.ts
+> generationService.ts
+> xmlValidator.ts
+>
+> 2️⃣ Implement Builder Pattern:
+>
+> interface QuestionBuilder {
+> generate(question: Question): string
+> }
+>
+> 3️⃣ Implement QTI 2.1 MCQ builder:
+>
+> It must generate fully compliant QTI 2.1 XML:
+>
+> * Proper namespaces
+> * responseDeclaration
+> * correctResponse
+> * itemBody
+> * choiceInteraction
+> * simpleChoice
+>
+> 4️⃣ Internal Template:
+>
+> Do NOT use string replace.
+> Construct XML programmatically using template literals carefully.
+> Escape XML special characters.
+>
+> 5️⃣ XML Validation:
+>
+> After generating XML:
+>
+> * Parse using an XML parser library
+> * Catch malformed XML
+> * Throw structured error
+>
+> 6️⃣ Generation Service:
+>
+> Create a function:
+>
+> generateQTIForUpload(uploadId: string)
+>
+> Steps:
+>
+> * Fetch all questions where:
+>   upload_id = uploadId
+>   validation_status = 'Valid'
+>   type = 'MCQ'
+> * For each question:
+>
+>   * Generate XML using mcqBuilder
+>   * Validate XML
+>   * Update:
+>     generation_status = 'Success'
+>     generated_output = xml string
+>   * If error:
+>     generation_status = 'Failed'
+>     generation_errors = error object
+> * Return summary:
+>   total
+>   success
+>   failed
+>
+> 7️⃣ Create API Route:
+>
+> POST /api/generate-qti
+>
+> Body:
+> {
+> uploadId: string
+> }
+>
+> It should:
+>
+> * Call generationService
+> * Return summary JSON
+>
+> 8️⃣ Important:
+>
+> * Use Supabase service role key ONLY on server
+> * Strong TypeScript types
+> * Proper error handling
+> * No frontend generation
+> * No ZIP packaging yet
+>
+> 9️⃣ XML must look like:
+>
+> <assessmentItem
+> xmlns="http://www.imsglobal.org/xsd/imsqti_v2p1"
+> identifier="PHY_001"
+> title="MCQ Question"
+> adaptive="false"
+> timeDependent="false">
+>
+>   <responseDeclaration identifier="RESPONSE" cardinality="single" baseType="identifier">
+>     <correctResponse>
+>       <value>A</value>
+>     </correctResponse>
+>   </responseDeclaration>
+>
+>   <itemBody>
+>     <choiceInteraction responseIdentifier="RESPONSE" shuffle="true" maxChoices="1">
+>       <prompt>Question Stem</prompt>
+>       <simpleChoice identifier="A">Option A</simpleChoice>
+>       <simpleChoice identifier="B">Option B</simpleChoice>
+>     </choiceInteraction>
+>   </itemBody>
+>
+> </assessmentItem>
+>
+> 10️⃣ Ensure:
+>
+> * Options get identifiers A, B, C, D dynamically
+> * correct_answer matches identifier
+> * Escape &, <, >
+> * Throw error if correct_answer not in options
+>
+> Write full implementation code.
+> Do not simplify logic.
+> Make it production-ready.
+
+---
+
