@@ -6,6 +6,7 @@ import {
   FileCode, 
   FileJson, 
   Layers,
+  Download,
   Home,
   ChevronLeft,
   ChevronRight
@@ -90,6 +91,20 @@ export function WorkspaceLayout() {
             >
               <Layers className="w-5 h-5 flex-shrink-0" />
               {!sidebarCollapsed && <span>Batch QTI Creator</span>}
+            </button>
+          </Link>
+
+          <Link to="/workspace/lms-export">
+            <button
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors",
+                isActive("/workspace/lms-export")
+                  ? "bg-[#0F6CBD] text-white"
+                  : "hover:bg-[#F1F5F9] text-[#475569]"
+              )}
+            >
+              <Download className="w-5 h-5 flex-shrink-0" />
+              {!sidebarCollapsed && <span>Export to LMS</span>}
             </button>
           </Link>
         </nav>

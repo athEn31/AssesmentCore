@@ -166,6 +166,16 @@ export function generateQTI21XML(question: QTIQuestion): string {
       <value>${escapeXml(question.correctAnswer || '')}</value>
     </correctResponse>
   </responseDeclaration>`;
+  } else {
+    // Fallback: if type is not recognized but we have a correct answer, treat as text entry
+    if (question.correctAnswer) {
+      xml += `
+  <responseDeclaration identifier="RESPONSE" cardinality="single" baseType="string">
+    <correctResponse>
+      <value>${escapeXml(question.correctAnswer)}</value>
+    </correctResponse>
+  </responseDeclaration>`;
+    }
   }
 
   // Outcome declaration
@@ -191,9 +201,14 @@ export function generateQTI21XML(question: QTIQuestion): string {
     });
     xml += `
       </choiceInteraction>`;
-  } else if (question.type === 'shortanswer') {
+  } else if (question.type === 'shortanswer' || !question.options) {
+    // Text entry for shortanswer type or if no options (fallback)
+    const answerLength = question.correctAnswer?.length || 20;
+    const expectedLength = Math.max(20, Math.min(answerLength + 10, 500));
     xml += `
-      <textEntryInteraction responseIdentifier="RESPONSE" expectedLength="20" />`;
+      <textEntryInteraction responseIdentifier="RESPONSE" expectedLength="${expectedLength}">
+        <prompt>Enter your answer:</prompt>
+      </textEntryInteraction>`;
   }
 
   xml += `
@@ -244,6 +259,16 @@ export function generateQTI22XML(question: QTIQuestion): string {
       <value>${escapeXml(question.correctAnswer || '')}</value>
     </correctResponse>
   </responseDeclaration>`;
+  } else {
+    // Fallback: if type is not recognized but we have a correct answer, treat as text entry
+    if (question.correctAnswer) {
+      xml += `
+  <responseDeclaration identifier="RESPONSE" cardinality="single" baseType="string">
+    <correctResponse>
+      <value>${escapeXml(question.correctAnswer)}</value>
+    </correctResponse>
+  </responseDeclaration>`;
+    }
   }
 
   // Outcome declaration
@@ -269,9 +294,14 @@ export function generateQTI22XML(question: QTIQuestion): string {
     });
     xml += `
       </choiceInteraction>`;
-  } else if (question.type === 'shortanswer') {
+  } else if (question.type === 'shortanswer' || !question.options) {
+    // Text entry for shortanswer type or if no options (fallback)
+    const answerLength = question.correctAnswer?.length || 20;
+    const expectedLength = Math.max(20, Math.min(answerLength + 10, 500));
     xml += `
-      <textEntryInteraction responseIdentifier="RESPONSE" expectedLength="20" />`;
+      <textEntryInteraction responseIdentifier="RESPONSE" expectedLength="${expectedLength}">
+        <prompt>Enter your answer:</prompt>
+      </textEntryInteraction>`;
   }
 
   xml += `

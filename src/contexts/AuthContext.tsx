@@ -16,20 +16,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-        const currentUser = await authService.getCurrentUser();
-        setUser(currentUser);
+        // Add timeout to prevent hanging on invalid/missing Supabase config
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Auth initialization timeout')), 5000)
+        );
 
-        if (currentUser) {
-          // Fetch user profile
-          const profile = await authService.getUserProfile(currentUser.id);
-          setUserProfile(profile);
+        const authPromise = (async () => {
+          const currentUser = await authService.getCurrentUser();
+          setUser(currentUser);
 
-          // Fetch user usage
-          const usage = await authService.getUserUsage(currentUser.id);
-          setUserUsage(usage);
-        }
+          if (currentUser) {
+            // Fetch user profile
+            const profile = await authService.getUserProfile(currentUser.id);
+            setUserProfile(profile);
+
+            // Fetch user usage
+            const usage = await authService.getUserUsage(currentUser.id);
+            setUserUsage(usage);
+          }
+        })();
+
+        await Promise.race([authPromise, timeoutPromise]);
       } catch (error) {
         console.error('Error initializing auth:', error);
+        // Even on error/timeout, we continue with unauthenticated state
+        setUser(null);
+        setUserProfile(null);
+        setUserUsage(null);
       } finally {
         setLoading(false);
       }
@@ -50,11 +63,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (session?.user) {
-        const profile = await authService.getUserProfile(session.user.id);
-        setUserProfile(profile);
+        try {
+          // Add timeout protection for profile and usage fetch
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Profile fetch timeout')), 5000)
+          );
 
-        const usage = await authService.getUserUsage(session.user.id);
-        setUserUsage(usage);
+          const fetchPromise = (async () => {
+            const profile = await authService.getUserProfile(session.user.id);
+            setUserProfile(profile);
+
+            const usage = await authService.getUserUsage(session.user.id);
+            setUserUsage(usage);
+          })();
+
+          await Promise.race([fetchPromise, timeoutPromise]);
+        } catch (error) {
+          console.error('Error fetching user data:', error);
+          setUserProfile(null);
+          setUserUsage(null);
+        }
       } else {
         setUserProfile(null);
         setUserUsage(null);

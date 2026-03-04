@@ -3,12 +3,12 @@ import { LandingPage } from "./pages/LandingPage";
 import { WorkspaceLayout } from "./pages/workspace/WorkspaceLayout";
 import { QTIRenderer } from "./pages/workspace/QTIRenderer";
 import { BatchCreator } from "./pages/workspace/BatchCreator";
+import { LMSExportPage } from "./pages/workspace/LMSExportPage";
 import { RegisterPage } from "./pages/auth/RegisterPage";
 import { LoginPage } from "./pages/auth/LoginPage";
 import { VerifyEmailPage } from "./pages/auth/VerifyEmailPage";
 import { ForgotPasswordPage } from "./pages/auth/ForgotPasswordPage";
 import { ResetPasswordPage } from "./pages/auth/ResetPasswordPage";
-import { PricingPage } from "./pages/PricingPage";
 
 export const router = createBrowserRouter([
   {
@@ -41,10 +41,6 @@ export const router = createBrowserRouter([
     ],
   },
   {
-    path: "/pricing",
-    Component: PricingPage,
-  },
-  {
     path: "/workspace",
     Component: WorkspaceLayout,
     children: [
@@ -59,6 +55,10 @@ export const router = createBrowserRouter([
       {
         path: "batch-creator",
         Component: BatchCreator,
+      },
+      {
+        path: "lms-export",
+        Component: LMSExportPage,
       },
     ],
   },

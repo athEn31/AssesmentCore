@@ -7,3 +7,6 @@ logs
 .vscode/
 .idea
 .DS_Store
+.prompt
+.sample
+.tsc_errors

@@ -54,6 +54,11 @@ export function ValidationReport({
   const inputRef = useRef<HTMLInputElement>(null);
   const headerInputRef = useRef<HTMLInputElement>(null);
 
+  // Sync localRows with rows prop when it changes (e.g., after deduplication)
+  useEffect(() => {
+    setLocalRows(rows);
+  }, [rows]);
+
   // Auto-select all text when editing starts
   useEffect(() => {
     if (editingCell && inputRef.current) {

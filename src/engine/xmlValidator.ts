@@ -1,6 +1,6 @@
 /**
  * XML Validator for QTI content
- * Validates generated XML against QTI 2.1 schema requirements
+ * Validates generated XML against QTI schema requirements (1.2, 2.1, 3.0)
  */
 
 import { XMLValidationError } from './types';
@@ -41,67 +41,94 @@ export function validateXml(xmlString: string): XMLValidationError[] {
       return errors;
     }
 
-    if (root.tagName !== 'assessmentItem') {
+    // Support multiple QTI versions
+    const validRootElements = ['assessmentItem', 'questestinterop'];
+    if (!validRootElements.includes(root.tagName)) {
       errors.push({
-        message: `Expected root element 'assessmentItem', got '${root.tagName}'`,
+        message: `Expected root element 'assessmentItem' or 'questestinterop', got '${root.tagName}'`,
       });
       return errors;
     }
 
-    // Validate required attributes
-    if (!root.hasAttribute('xmlns')) {
-      errors.push({
-        message: 'Missing required attribute: xmlns',
-      });
-    }
-
-    if (!root.hasAttribute('identifier')) {
-      errors.push({
-        message: 'Missing required attribute: identifier',
-      });
-    }
-
-    // Validate required child elements
-    const responseDecl = root.querySelector('responseDeclaration');
-    if (!responseDecl) {
-      errors.push({
-        message: 'Missing required element: responseDeclaration',
-      });
-    }
-
-    const itemBody = root.querySelector('itemBody');
-    if (!itemBody) {
-      errors.push({
-        message: 'Missing required element: itemBody',
-      });
-    }
-
-    // Validate responseDeclaration structure
-    if (responseDecl) {
-      const correctResponse = responseDecl.querySelector('correctResponse');
-      if (!correctResponse) {
+    // Validate QTI 2.1/3.0 format (assessmentItem)
+    if (root.tagName === 'assessmentItem') {
+      // Validate required attributes
+      if (!root.hasAttribute('xmlns')) {
         errors.push({
-          message: 'Missing correctResponse in responseDeclaration',
+          message: 'Missing required attribute: xmlns',
+        });
+      }
+
+      if (!root.hasAttribute('identifier')) {
+        errors.push({
+          message: 'Missing required attribute: identifier',
+        });
+      }
+    }
+    
+    // Validate QTI 1.2 format (questestinterop)
+    if (root.tagName === 'questestinterop') {
+      // QTI 1.2 should have assessment/section/item structure
+      const assessment = root.querySelector('assessment');
+      if (!assessment) {
+        errors.push({
+          message: 'QTI 1.2: Missing required element: assessment',
+        });
+      }
+      
+      const item = root.querySelector('item');
+      if (!item) {
+        errors.push({
+          message: 'QTI 1.2: Missing required element: item',
         });
       }
     }
 
-    // Validate itemBody has choiceInteraction
-    if (itemBody) {
-      const choiceInteraction = itemBody.querySelector('choiceInteraction');
-      if (!choiceInteraction) {
+    // Validate QTI 2.1/3.0 required child elements (only for assessmentItem)
+    if (root.tagName === 'assessmentItem') {
+      const responseDecl = root.querySelector('responseDeclaration');
+      if (!responseDecl) {
         errors.push({
-          message: 'Missing choiceInteraction in itemBody',
+          message: 'Missing required element: responseDeclaration',
         });
       }
 
-      // Check for simpleChoice elements
-      if (choiceInteraction) {
-        const simpleChoices = choiceInteraction.querySelectorAll('simpleChoice');
-        if (simpleChoices.length < 2) {
+      const itemBody = root.querySelector('itemBody');
+      if (!itemBody) {
+        errors.push({
+          message: 'Missing required element: itemBody',
+        });
+      }
+
+      // Validate responseDeclaration structure
+      if (responseDecl) {
+        const correctResponse = responseDecl.querySelector('correctResponse');
+        if (!correctResponse) {
           errors.push({
-            message: `At least 2 options required, found ${simpleChoices.length}`,
+            message: 'Missing correctResponse in responseDeclaration',
           });
+        }
+      }
+
+      // Validate itemBody has choiceInteraction or textEntryInteraction
+      if (itemBody) {
+        const choiceInteraction = itemBody.querySelector('choiceInteraction');
+        const textEntryInteraction = itemBody.querySelector('textEntryInteraction');
+        
+        if (!choiceInteraction && !textEntryInteraction) {
+          errors.push({
+            message: 'Missing interaction in itemBody (choiceInteraction or textEntryInteraction)',
+          });
+        }
+
+        // Check for simpleChoice elements if it's a choice interaction
+        if (choiceInteraction) {
+          const simpleChoices = choiceInteraction.querySelectorAll('simpleChoice');
+          if (simpleChoices.length < 2) {
+            errors.push({
+              message: `At least 2 options required, found ${simpleChoices.length}`,
+            });
+          }
         }
       }
     }

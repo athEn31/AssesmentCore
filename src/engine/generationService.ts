@@ -6,6 +6,52 @@
 
 import { Question, GenerationSummary, GenerationError } from './types';
 import { generateAndValidateMCQ } from './builders/qti21/mcqBuilder';
+import { generateAndValidateMCQ12 } from './builders/qti12/mcqBuilder';
+import { generateAndValidateMCQ30 } from './builders/qti30/mcqBuilder';
+import { generateAndValidateTextEntry } from './builders/qti21/textEntryBuilder';
+import { generateAndValidateTextEntry12 } from './builders/qti12/textEntryBuilder';
+import { generateAndValidateTextEntry30 } from './builders/qti30/textEntryBuilder';
+
+/**
+ * Generate QTI XML based on question type and version
+ */
+export function generateQTIByVersion(
+  question: Question,
+  version: 'qti-1.2' | 'qti-2.1' | 'qti-3.0' = 'qti-2.1',
+  questionType: 'MCQ' | 'ShortAnswer' = 'MCQ'
+): { xml: string } | { error: GenerationError } {
+  // Route to the correct builder based on version and type
+  if (questionType === 'MCQ') {
+    switch (version) {
+      case 'qti-1.2':
+        return generateAndValidateMCQ12(question);
+      case 'qti-2.1':
+        return generateAndValidateMCQ(question);
+      case 'qti-3.0':
+        return generateAndValidateMCQ30(question);
+      default:
+        return generateAndValidateMCQ(question);
+    }
+  } else if (questionType === 'ShortAnswer') {
+    switch (version) {
+      case 'qti-1.2':
+        return generateAndValidateTextEntry12(question);
+      case 'qti-2.1':
+        return generateAndValidateTextEntry(question);
+      case 'qti-3.0':
+        return generateAndValidateTextEntry30(question);
+      default:
+        return generateAndValidateTextEntry(question);
+    }
+  }
+
+  return {
+    error: {
+      code: 'UNSUPPORTED_TYPE',
+      message: `Question type '${questionType}' is not supported`,
+    },
+  };
+}
 
 /**
  * Generate QTI for a single question

@@ -35,7 +35,7 @@ export function LandingPage() {
                 <FileCode className="w-5 h-5 text-white" />
               </div>
               <span className="text-xl font-semibold text-white">
-                AssesmentCore
+                AssessmentCore
               </span>
             </div>
 
@@ -44,7 +44,6 @@ export function LandingPage() {
               <a href="#home" className="text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors">Home</a>
               <a href="#about" className="text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors">About</a>
               <a href="#services" className="text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors">Services</a>
-              <a href="#pricing" className="text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors">Pricing</a>
               <a href="#contact" className="text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors">Contact</a>
               <Link to="/workspace">
                 <Button className="bg-[#0F6CBD] hover:bg-[#0B5A9A] active:bg-[#094A7F] text-white rounded-md">
@@ -71,7 +70,6 @@ export function LandingPage() {
               <a href="#home" className="block text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors py-2">Home</a>
               <a href="#about" className="block text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors py-2">About</a>
               <a href="#services" className="block text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors py-2">Services</a>
-              <a href="#pricing" className="block text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors py-2">Pricing</a>
               <a href="#contact" className="block text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors py-2">Contact</a>
               <Link to="/workspace" className="block">
                 <Button className="w-full bg-[#0F6CBD] hover:bg-[#0B5A9A] active:bg-[#094A7F] text-white rounded-md">
@@ -105,13 +103,8 @@ export function LandingPage() {
                   <ArrowRight className="ml-2 w-5 h-5" />
                 </Button>
               </Link>
-              <a href="#pricing">
-                <Button size="lg" variant="outline" className="border border-[#334155] text-[#1F2937] hover:bg-[#F1F5F9] rounded-md">
-                  View Pricing
-                </Button>
-              </a>
             </div>
-          </div>
+            </div>
 
           {/* Feature Highlights */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-20">
@@ -204,7 +197,7 @@ export function LandingPage() {
                     <div className="text-sm opacity-90">Uptime</div>
                   </div>
                   <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6">
-                    <div className="text-4xl font-bold mb-2">10M+</div>
+                    <div className="text-4xl font-bold mb-2">10k+</div>
                     <div className="text-sm opacity-90">Questions Converted</div>
                   </div>
                   <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6">
@@ -314,144 +307,7 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Pricing Section */}
-      <section id="pricing" className="py-20 px-4 sm:px-6 lg:px-8 bg-[#F8FAFC]">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl font-bold text-[#111827] mb-4">Simple, Transparent Pricing</h2>
-            <p className="text-xl text-[#475569] max-w-2xl mx-auto">
-              Choose the plan that fits your needs. All plans include core features.
-            </p>
-          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto">
-            {/* Starter Plan */}
-            <Card className="border border-[#E2E8F0] hover:shadow-xl transition-shadow">
-              <CardHeader>
-                <CardTitle className="text-2xl">Starter</CardTitle>
-                <CardDescription>Perfect for getting started</CardDescription>
-                <div className="mt-4">
-                  <span className="text-4xl font-bold text-[#111827]">$49</span>
-                  <span className="text-[#475569]">/month</span>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-3 mb-6">
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">Up to 5,000 questions/month</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">QTI 2.1 & JSON export</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">Batch processing</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">Email support</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">QTI Renderer</span>
-                  </li>
-                </ul>
-                <Button className="w-full border border-[#334155] text-[#1F2937] hover:bg-[#F1F5F9] rounded-md" variant="outline">Get Started</Button>
-              </CardContent>
-            </Card>
-
-            {/* Professional Plan */}
-            <Card className="border border-[#0F6CBD] hover:shadow-xl transition-shadow relative">
-              <div className="absolute -top-4 left-1/2 -translate-x-1/2">
-                <span className="bg-[#0F6CBD] text-white px-4 py-1 rounded-full text-sm font-semibold">
-                  Most Popular
-                </span>
-              </div>
-              <CardHeader>
-                <CardTitle className="text-2xl">Professional</CardTitle>
-                <CardDescription>For growing platforms</CardDescription>
-                <div className="mt-4">
-                  <span className="text-4xl font-bold text-[#111827]">$149</span>
-                  <span className="text-[#475569]">/month</span>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-3 mb-6">
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">Up to 25,000 questions/month</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">QTI 2.1, 3.0 & JSON export</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">Advanced batch processing</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">Priority support</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">API access</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">Custom templates</span>
-                  </li>
-                </ul>
-                <Button className="w-full bg-[#0F6CBD] hover:bg-[#0B5A9A] active:bg-[#094A7F] text-white rounded-md">
-                  Get Started
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* Enterprise Plan */}
-            <Card className="border border-[#E2E8F0] hover:shadow-xl transition-shadow">
-              <CardHeader>
-                <CardTitle className="text-2xl">Enterprise</CardTitle>
-                <CardDescription>For large-scale platforms</CardDescription>
-                <div className="mt-4">
-                  <span className="text-4xl font-bold text-[#111827]">Custom</span>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-3 mb-6">
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">Unlimited questions</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">All formats & versions</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">Dedicated infrastructure</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">24/7 premium support</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">Custom integrations</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <CheckCircle2 className="w-5 h-5 text-[#16A34A] flex-shrink-0 mt-0.5" />
-                    <span className="text-[#475569]">SLA guarantee</span>
-                  </li>
-                </ul>
-                <Button className="w-full border border-[#334155] text-[#1F2937] hover:bg-[#F1F5F9] rounded-md" variant="outline">Contact Sales</Button>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      </section>
 
       {/* Contact Section */}
       <section id="contact" className="py-20 px-4 sm:px-6 lg:px-8">
@@ -471,7 +327,7 @@ export function LandingPage() {
                   </div>
                   <div>
                     <h4 className="font-semibold text-[#111827] mb-1">Email</h4>
-                    <p className="text-[#475569]">info@assesmentcore.com</p>
+                    <p className="text-[#475569]">hello@assesmentcore.in</p>
                   </div>
                 </div>
 
@@ -481,7 +337,7 @@ export function LandingPage() {
                   </div>
                   <div>
                     <h4 className="font-semibold text-[#111827] mb-1">Phone</h4>
-                    <p className="text-[#475569]">+1 (555) 123-4567</p>
+                    <p className="text-[#475569]"></p>
                   </div>
                 </div>
 
@@ -492,8 +348,9 @@ export function LandingPage() {
                   <div>
                     <h4 className="font-semibold text-[#111827] mb-1">Office</h4>
                     <p className="text-[#475569]">
-                      123 EdTech Avenue<br />
-                      San Francisco, CA 94105
+                      Tamluk<br />
+                      West Bengal, India<br />
+                      721628
                     </p>
                   </div>
                 </div>
@@ -572,7 +429,6 @@ export function LandingPage() {
               <h4 className="font-semibold mb-4">Product</h4>
               <ul className="space-y-2 text-[#94A3B8]">
                 <li><a href="#services" className="hover:text-white transition-colors">Services</a></li>
-                <li><a href="#pricing" className="hover:text-white transition-colors">Pricing</a></li>
                 <li><Link to="/workspace" className="hover:text-white transition-colors">Workspace</Link></li>
               </ul>
             </div>

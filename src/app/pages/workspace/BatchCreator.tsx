@@ -23,7 +23,8 @@ import {
   RefreshCw,
   Lock,
   LogIn,
-  ArrowRight
+  Check,
+  Copy
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
@@ -45,8 +46,14 @@ import { ValidationReport } from "../../components/ValidationReport";
 import { parseFile, detectQuestionColumns } from "../../utils/fileParser";
 import { validateAllQuestions, ValidationResult } from "../../utils/questionValidator";
 import { convertToQTIQuestion, generateJSON, generateQTI } from "../../utils/qtiConverter";
-import { generateAndValidateMCQ, Question as QTIQuestion } from "../../../engine";
+import { 
+  generateAndValidateMCQ, 
+  generateAndValidateTextEntry, 
+  generateQTIByVersion,
+  Question as QTIQuestion 
+} from "../../../engine";
 import { useAuth } from "../../../contexts/AuthContext";
+
 
 
 interface FileData {
@@ -138,31 +145,201 @@ export function BatchCreator() {
     setValidationResults(resultsMap);
   };
 
+  // Remove duplicate questions - keep first occurrence of each duplicate group
+  const handleDeduplicate = () => {
+    if (!editedRows || editedRows.length === 0) return;
+
+    const duplicateIds = new Set<string>();
+    validationResults.forEach((result, rowId) => {
+      if (result.warnings.some(w => w.field === 'Duplicate')) {
+        duplicateIds.add(rowId);
+      }
+    });
+
+    if (duplicateIds.size === 0) {
+      alert('No duplicate questions detected');
+      return;
+    }
+
+    // Group duplicates by fingerprint
+    const fingerprintGroups = new Map<string, string[]>();
+    editedRows.forEach(row => {
+      if (!duplicateIds.has(row.id)) return;
+      const result = validationResults.get(row.id);
+      if (!result) return;
+
+      // Extract fingerprint from question text for grouping
+      const questionText = columnMapping.questionCol ? row[columnMapping.questionCol] : '';
+      const fingerprint = String(questionText || '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (!fingerprintGroups.has(fingerprint)) {
+        fingerprintGroups.set(fingerprint, []);
+      }
+      fingerprintGroups.get(fingerprint)!.push(row.id);
+    });
+
+    // Keep first occurrence of each duplicate group, remove others
+    const idsToRemove = new Set<string>();
+    fingerprintGroups.forEach((ids) => {
+      // Sort by row number and keep the first one
+      const sortedIds = ids.sort((a, b) => {
+        const aIndex = editedRows.findIndex(r => r.id === a);
+        const bIndex = editedRows.findIndex(r => r.id === b);
+        return aIndex - bIndex;
+      });
+      // Remove all but the first
+      sortedIds.slice(1).forEach(id => idsToRemove.add(id));
+    });
+
+    if (idsToRemove.size === 0) {
+      alert('No duplicates to remove');
+      return;
+    }
+
+    const confirmMessage = `This will remove ${idsToRemove.size} duplicate question(s), keeping the first occurrence of each. Continue?`;
+    if (!confirm(confirmMessage)) return;
+
+    // Remove duplicates
+    const deduplicatedRows = editedRows.filter(row => !idsToRemove.has(row.id));
+    handleDataChange(deduplicatedRows);
+    alert(`Successfully removed ${idsToRemove.size} duplicate question(s)`);
+  };
+
+  const generateQTIManifest = (
+    files: Array<{ identifier: string; filename: string }>,
+    version: 'qti-1.2' | 'qti-2.1' | 'qti-3.0' = 'qti-2.1'
+  ) => {
+    const timestamp = new Date().toISOString();
+    let resourcesXml = '';
+    
+    // Generate resource entries based on version
+    if (version === 'qti-1.2') {
+      // QTI 1.2 uses imsqti_xmlv1p2 as resource type
+      files.forEach((file, index) => {
+        const resourceId = `res_${file.filename.replace('.xml', '')}`;
+        resourcesXml += `\n    <resource identifier="${resourceId}" type="imsqti_xmlv1p2" href="${file.filename}">\n      <file href="${file.filename}"/>\n    </resource>`;
+      });
+    } else {
+      // QTI 2.1 and 3.0 use imsqti_item_xmlvXpX format
+      let resourceType = 'imsqti_item_xmlv2p1';
+      if (version === 'qti-3.0') {
+        resourceType = 'imsqti_item_xmlv3p0';
+      }
+      
+      files.forEach((file, index) => {
+        const resourceId = `res_${file.filename.replace('.xml', '')}`;
+        resourcesXml += `\n    <resource identifier="${resourceId}" type="${resourceType}" href="${file.filename}">\n      <file href="${file.filename}"/>\n    </resource>`;
+      });
+    }
+
+    let manifest = '';
+
+    // Generate manifest based on version
+    if (version === 'qti-1.2') {
+      manifest = `<?xml version="1.0" encoding="UTF-8"?>
+<manifest identifier="MANIFEST-QTI-12" 
+          xmlns="http://www.imsglobal.org/xsd/imscp_v1p1"
+          xmlns:imsmd="http://www.imsglobal.org/xsd/imsmd_v1p2"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://www.imsglobal.org/xsd/imscp_v1p1 http://www.imsglobal.org/xsd/imscp_v1p1.xsd">
+  <metadata>
+    <schema>IMS Content</schema>
+    <schemaversion>1.2</schemaversion>
+  </metadata>
+  <organizations/>
+  <resources>${resourcesXml}
+  </resources>
+</manifest>`;
+    } else if (version === 'qti-3.0') {
+      manifest = `<?xml version="1.0" encoding="UTF-8"?>
+<manifest xmlns="http://www.imsglobal.org/xsd/imscp_v1p1"
+          xmlns:imsqti="http://www.imsglobal.org/xsd/imsqti_v3p0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://www.imsglobal.org/xsd/imscp_v1p1 http://www.imsglobal.org/xsd/imscp_v1p1/imscp_v1p1.xsd http://www.imsglobal.org/xsd/imsqti_v3p0 http://www.imsglobal.org/xsd/qti/qtiv3p0/imsqti_v3p0.xsd"
+          identifier="QTI_EXPORT_MANIFEST"
+          version="1.0">
+
+  <metadata>
+    <schema>IMS Content Packaging</schema>
+    <schemaversion>1.1</schemaversion>
+    <created>${timestamp}</created>
+  </metadata>
+
+  <organizations/>
+
+  <resources>${resourcesXml}
+  </resources>
+</manifest>`;
+    } else {
+      // QTI 2.1 (default)
+      manifest = `<?xml version="1.0" encoding="UTF-8"?>
+<manifest xmlns="http://www.imsglobal.org/xsd/imscp_v1p1"
+          xmlns:imsqti="http://www.imsglobal.org/xsd/imsqti_v2p1"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://www.imsglobal.org/xsd/imscp_v1p1 http://www.imsglobal.org/xsd/imscp_v1p1/imscp_v1p1.xsd http://www.imsglobal.org/xsd/imsqti_v2p1 http://www.imsglobal.org/xsd/qti/qtiv2p1/imsqti_v2p1.xsd"
+          identifier="QTI_EXPORT_MANIFEST"
+          version="1.0">
+
+  <metadata>
+    <schema>IMS Content Packaging</schema>
+    <schemaversion>1.1</schemaversion>
+    <created>${timestamp}</created>
+  </metadata>
+
+  <organizations/>
+
+  <resources>${resourcesXml}
+  </resources>
+</manifest>`;
+    }
+
+    return manifest;
+  };
+
   const exportToQTI = async () => {
     if (!fileData || !columnMapping) return;
 
+    // Save form data for LMS export
+    saveFormDataToLocalStorage();
+
     setIsExporting(true);
+    setAiValidationResult(null);
+    setPendingZipBlob(null);
+
     try {
       const zip = new JSZip();
       let exportCount = 0;
+      const exportedFiles: Array<{ identifier: string; filename: string }> = [];
+      const xmlFilesForValidation: Array<{ fileName: string; xmlContent: string }> = [];
 
       for (const row of editedRows) {
         const validationResult = validationResults.get(row.id);
+        
+        // Skip questions with rejected status (critical errors)
+        if (validationResult?.status === 'rejected') {
+          continue;
+        }
+        
         const questionType = validationResult?.detectedType || 'shortanswer';
+        const itemNumber = String(exportCount + 1).padStart(3, '0');
+        const safeItemIdentifier = `item_${itemNumber}`;
+        const fileName = `${safeItemIdentifier}.xml`;
 
         try {
+          let xmlContent = '';
+
           if (questionType === 'mcq') {
-            // Use the production QTI builder for MCQ
             const optionValues = columnMapping.optionCols
               ?.map((col: string) => row[col])
               .filter((v: any) => v !== null && v !== undefined && v !== '') || [];
 
-            console.log('MCQ Export - Options:', optionValues, 'from cols:', columnMapping.optionCols);
-
             const qtiQuestion: QTIQuestion = {
               id: row.id || `q-${Date.now()}`,
               upload_id: 'batch-export',
-              identifier: (row[columnMapping.questionCol] as string)?.substring(0, 50) || `q-${row.id}`,
+              identifier: safeItemIdentifier,
               stem: (row[columnMapping.questionCol] as string) || '',
               type: 'MCQ',
               options: optionValues.map((v: any) => String(v)),
@@ -170,83 +347,139 @@ export function BatchCreator() {
               validation_status: (validationResult?.status as string) === 'valid' ? 'Valid' : 'Caution',
             };
 
-            const result = generateAndValidateMCQ(qtiQuestion);
+            const result = generateQTIByVersion(
+              qtiQuestion, 
+              outputFormat as 'qti-1.2' | 'qti-2.1' | 'qti-3.0',
+              'MCQ'
+            );
             if ('error' in result) {
-              console.warn(`Failed to generate MCQ for ${qtiQuestion.identifier}:`, result.error.message);
-              // Fall back to old converter
               const oldQti = convertToQTIQuestion(row, 'mcq', columnMapping);
-              const fallbackXml = generateQTI(oldQti, '2.1', 'xml').xml || '';
-              const fileName = `${qtiQuestion.identifier || `Q${exportCount + 1}`}.xml`;
-              zip.file(fileName, fallbackXml);
-              exportCount++;
+              oldQti.id = safeItemIdentifier;
+              xmlContent = generateQTI(oldQti, outputFormat === 'qti-1.2' ? '1.2' : outputFormat === 'qti-3.0' ? '3.0' : '2.1', 'xml').xml || '';
             } else {
-              const fileName = `${qtiQuestion.identifier || `Q${exportCount + 1}`}.xml`;
-              zip.file(fileName, result.xml);
-              exportCount++;
+              xmlContent = result.xml;
+            }
+          } else if (questionType === 'shortanswer') {
+            const qtiQuestion: QTIQuestion = {
+              id: row.id || `q-${Date.now()}`,
+              upload_id: 'batch-export',
+              identifier: safeItemIdentifier,
+              stem: (row[columnMapping.questionCol] as string) || '',
+              type: 'ShortAnswer',
+              options: [],
+              correct_answer: (row[columnMapping.answerCol] as string) || '',
+              validation_status: (validationResult?.status as string) === 'valid' ? 'Valid' : 'Caution',
+            };
+
+            const result = generateQTIByVersion(
+              qtiQuestion,
+              outputFormat as 'qti-1.2' | 'qti-2.1' | 'qti-3.0',
+              'ShortAnswer'
+            );
+            if ('error' in result) {
+              const oldQti = convertToQTIQuestion(row, 'shortanswer', columnMapping);
+              oldQti.id = safeItemIdentifier;
+              xmlContent = generateQTI(oldQti, outputFormat === 'qti-1.2' ? '1.2' : outputFormat === 'qti-3.0' ? '3.0' : '2.1', 'xml').xml || '';
+            } else {
+              xmlContent = result.xml;
             }
           } else {
-            // Use old converter for other types
             const oldQti = convertToQTIQuestion(row, questionType, columnMapping);
-            const xml = generateQTI(oldQti, '2.1', 'xml').xml || '';
-            const identifier = row[columnMapping.questionCol]?.substring(0, 50) || `q-${row.id}`;
-            const fileName = `${identifier || `Q${exportCount + 1}`}.xml`;
-            zip.file(fileName, xml);
-            exportCount++;
+            oldQti.id = safeItemIdentifier;
+            xmlContent = generateQTI(oldQti, outputFormat === 'qti-1.2' ? '1.2' : outputFormat === 'qti-3.0' ? '3.0' : '2.1', 'xml').xml || '';
           }
+
+          zip.file(fileName, xmlContent);
+          exportedFiles.push({ identifier: safeItemIdentifier, filename: fileName });
+          xmlFilesForValidation.push({ fileName, xmlContent });
+          exportCount++;
         } catch (error) {
           console.warn(`Error generating QTI for row ${row.id}:`, error);
-          // Fallback to old converter
           const oldQti = convertToQTIQuestion(row, questionType, columnMapping);
-          const xml = generateQTI(oldQti, '2.1', 'xml').xml || '';
-          const identifier = row[columnMapping.questionCol]?.substring(0, 50) || `q-${row.id}`;
-          const fileName = `${identifier || `Q${exportCount + 1}`}.xml`;
+          oldQti.id = safeItemIdentifier;
+          const xml = generateQTI(oldQti, outputFormat === 'qti-1.2' ? '1.2' : outputFormat === 'qti-3.0' ? '3.0' : '2.1', 'xml').xml || '';
           zip.file(fileName, xml);
+          exportedFiles.push({ identifier: safeItemIdentifier, filename: fileName });
+          xmlFilesForValidation.push({ fileName, xmlContent: xml });
           exportCount++;
         }
       }
 
-      // Generate ZIP file and download
-      if (exportCount > 0) {
-        const blob = await zip.generateAsync({ type: 'blob' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `qti-export-${new Date().toISOString().slice(0, 10)}-${exportCount}questions.zip`;
-        link.click();
-        URL.revokeObjectURL(url);
-
-        // Track the export
-        await trackExport();
-
-        alert(`✓ Successfully exported ${exportCount} questions in ZIP file`);
-
-        // If this was the first export, redirect to pricing page
-        if (canUseFeature) {
-          setTimeout(() => {
-            navigate('/pricing');
-          }, 2000);
-        }
-      } else {
+      if (exportCount === 0) {
         alert('No valid questions to export');
+        setIsExporting(false);
+        return;
       }
+
+      // Generate and add imsmanifest.xml
+      const manifestXml = generateQTIManifest(
+        exportedFiles,
+        outputFormat as 'qti-1.2' | 'qti-2.1' | 'qti-3.0'
+      );
+      zip.file('imsmanifest.xml', manifestXml);
+
+      const blob = await zip.generateAsync({ type: 'blob' });
+      downloadZipBlob(blob, exportCount);
     } catch (error) {
       console.error("Export error:", error);
       alert("Error exporting to QTI format: " + (error instanceof Error ? error.message : String(error)));
+      setIsExporting(false);
+    }
+  };
+
+  // Download the prepared zip blob
+  const downloadZipBlob = async (blob: Blob, count: number) => {
+    setIsExporting(true);
+    try {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `qti-export-${new Date().toISOString().slice(0, 10)}-${count}questions.zip`;
+      link.click();
+      URL.revokeObjectURL(url);
+
+      await trackExport();
+      alert(`✓ Successfully exported ${count} questions in ZIP file`);
     } finally {
       setIsExporting(false);
+    }
+  };
+
+
+
+  // Save form data to localStorage for LMS export
+  const saveFormDataToLocalStorage = () => {
+    try {
+      const dataToSave = {
+        editedRows,
+        columnMapping,
+        validationResults: Array.from(validationResults.entries()), // Convert Map to array for JSON serialization
+      };
+      localStorage.setItem('batchCreatorData', JSON.stringify(dataToSave));
+    } catch (error) {
+      console.error('Error saving form data to localStorage:', error);
     }
   };
 
   const exportToJSON = async () => {
     if (!fileData || !columnMapping) return;
 
+    // Save form data for LMS export
+    saveFormDataToLocalStorage();
+
     setIsExporting(true);
     try {
-      const qtiQuestions = editedRows.map(row => {
-        const validationResult = validationResults.get(row.id);
-        const questionType = validationResult?.detectedType || 'shortanswer';
-        return convertToQTIQuestion(row, questionType, columnMapping);
-      });
+      const qtiQuestions = editedRows
+        .filter(row => {
+          const validationResult = validationResults.get(row.id);
+          // Skip questions with rejected status (critical errors)
+          return validationResult?.status !== 'rejected';
+        })
+        .map(row => {
+          const validationResult = validationResults.get(row.id);
+          const questionType = validationResult?.detectedType || 'shortanswer';
+          return convertToQTIQuestion(row, questionType, columnMapping);
+        });
 
       const json = generateJSON(qtiQuestions);
       const blob = new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' });
@@ -256,6 +489,11 @@ export function BatchCreator() {
       link.download = `qti-export-${Date.now()}.json`;
       link.click();
       URL.revokeObjectURL(url);
+
+      // Track the export
+      await trackExport();
+
+      alert(`✓ Successfully exported ${qtiQuestions.length} questions as JSON`);
     } catch (error) {
       console.error("Export error:", error);
       alert("Error exporting to JSON format");
@@ -288,9 +526,14 @@ export function BatchCreator() {
       caution: 0,
       rejected: 0,
       total: validationResults.size,
+      duplicates: 0,
     };
     validationResults.forEach(result => {
       stats[result.status]++;
+      // Count questions with duplicate warnings
+      if (result.warnings.some(w => w.field === 'Duplicate')) {
+        stats.duplicates++;
+      }
     });
     return stats;
   };
@@ -431,12 +674,11 @@ export function BatchCreator() {
             </div>
 
             <Button
-              onClick={() => navigate('/pricing')}
-              className="w-full bg-[#0F6CBD] hover:bg-[#0d4a94] text-white font-medium"
+              disabled
+              className="w-full bg-[#94A3B8] text-white font-medium cursor-not-allowed"
               size="lg"
             >
-              View Pricing Plans
-              <ArrowRight className="ml-2 h-4 w-4" />
+              Pricing Not Available
             </Button>
           </CardContent>
         </Card>
@@ -555,8 +797,9 @@ export function BatchCreator() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="qti-1.2">QTI 1.2</SelectItem>
                       <SelectItem value="qti-2.1">QTI 2.1</SelectItem>
-                      <SelectItem value="qti-2.2">QTI 2.2</SelectItem>
+                      <SelectItem value="qti-3.0">QTI 3.0</SelectItem>
                       <SelectItem value="json">JSON</SelectItem>
                     </SelectContent>
                   </Select>
@@ -584,7 +827,7 @@ export function BatchCreator() {
           // Results Section
           <div className="space-y-6">
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <Card>
                 <CardContent className="pt-6">
                   <div className="text-center">
@@ -626,6 +869,18 @@ export function BatchCreator() {
                       Rejected
                     </p>
                     <p className="text-3xl font-bold text-[#DC2626]">{stats.rejected}</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="text-center">
+                    <p className="text-[#475569] text-sm mb-1 flex items-center justify-center gap-1">
+                      <Copy className="w-4 h-4 text-[#F59E0B]" />
+                      Duplicates
+                    </p>
+                    <p className="text-3xl font-bold text-[#F59E0B]">{stats.duplicates}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -684,6 +939,17 @@ export function BatchCreator() {
                     </>
                   )}
                 </Button>
+
+                {stats.duplicates > 0 && (
+                  <Button
+                    onClick={handleDeduplicate}
+                    variant="outline"
+                    className="font-semibold border border-[#F59E0B] text-[#F59E0B] hover:bg-[#FEF3C7] rounded-md"
+                  >
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Remove Duplicates ({stats.duplicates})
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -710,14 +976,19 @@ export function BatchCreator() {
                   <FileJson className="h-4 w-4 text-[#0F6CBD]" />
                   <AlertTitle className="text-[#1F2937]">Ready to Export</AlertTitle>
                   <AlertDescription className="text-[#475569] text-sm">
-                    <span className="font-semibold text-[#16A34A]">{stats.valid} valid</span> questions ready to export • <span className="font-semibold text-[#D97706]">{stats.caution} caution</span> • <span className="font-semibold text-[#DC2626]">{stats.rejected} rejected</span>
+                    <span className="font-semibold text-[#16A34A]">{stats.valid + stats.caution} questions</span> ready to export ({stats.valid} valid, {stats.caution} with warnings) • <span className="font-semibold text-[#DC2626]">{stats.rejected} rejected</span>
+                    {stats.duplicates > 0 && (
+                      <span> • <span className="font-semibold text-[#F59E0B]">{stats.duplicates} duplicates detected</span></span>
+                    )}
                   </AlertDescription>
                 </Alert>
+
+
 
                 <div className="flex gap-2 flex-wrap">
                   <Button
                     onClick={exportToQTI}
-                    disabled={isExporting || stats.valid === 0}
+                    disabled={isExporting || (stats.valid + stats.caution) === 0}
                     className="bg-[#0F6CBD] hover:bg-[#0B5A9A] active:bg-[#094A7F] text-white font-semibold px-6 rounded-md"
                     size="lg"
                   >
@@ -736,7 +1007,7 @@ export function BatchCreator() {
 
                   <Button
                     onClick={exportToJSON}
-                    disabled={isExporting || stats.valid === 0}
+                    disabled={isExporting || (stats.valid + stats.caution) === 0}
                     variant="outline"
                     className="font-semibold px-6 border border-[#334155] text-[#1F2937] hover:bg-[#F1F5F9] rounded-md"
                     size="lg"

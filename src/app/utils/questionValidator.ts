@@ -238,42 +238,13 @@ function validateMCQ(
     });
   }
 
-  // Check option text length
-  optionValues.forEach((opt: any, idx: number) => {
-    if ((opt as string).length < 3) {
-      errors.push({
-        field: `Option ${idx + 1}`,
-        message: 'Option text too short (minimum 3 characters)',
-        level: 'warning',
-      });
-    }
-  });
-
-  // Check correct answer
-  if (columnMapping.answerCol && row[columnMapping.answerCol]) {
-    const correctAnswer = (row[columnMapping.answerCol] as string).trim().toUpperCase();
-    const validAnswers = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-    const validNumbers = ['1', '2', '3', '4', '5', '6', '7', '8'];
-
-    if (!validAnswers.includes(correctAnswer) && !validNumbers.includes(correctAnswer)) {
-      errors.push({
-        field: 'Correct Answer',
-        message: `Invalid correct answer format: "${correctAnswer}" (use A-H or 1-8)`,
-        level: 'critical',
-      });
-    } else {
-      const answerIndex = validAnswers.includes(correctAnswer)
-        ? validAnswers.indexOf(correctAnswer)
-        : parseInt(correctAnswer) - 1;
-
-      if (answerIndex >= optionValues.length) {
-        errors.push({
-          field: 'Correct Answer',
-          message: `Correct answer (${correctAnswer}) exceeds number of options (${optionValues.length})`,
-          level: 'critical',
-        });
-      }
-    }
+  // Check correct answer exists
+  if (columnMapping.answerCol && !row[columnMapping.answerCol]) {
+    errors.push({
+      field: 'Correct Answer',
+      message: 'Correct answer is missing',
+      level: 'critical',
+    });
   }
 }
 
@@ -313,39 +284,23 @@ function validateMSQ(
     });
   }
 
-  // Check correct answers format
+  // Check correct answers exist
   if (columnMapping.answerCol && row[columnMapping.answerCol]) {
-    const answers = (row[columnMapping.answerCol] as string).split(',').map(a => a.trim().toUpperCase());
-    const validAnswers = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-
-    const validNumbers = ['1', '2', '3', '4', '5', '6', '7', '8'];
-
-    if (answers.length === 0) {
+    const answersText = (row[columnMapping.answerCol] as string).trim();
+    
+    if (!answersText) {
       errors.push({
         field: 'Correct Answers',
         message: 'No correct answers specified',
         level: 'critical',
       });
-    } else if (answers.length === 1) {
-      errors.push({
-        field: 'Correct Answers',
-        message: 'MSQ should have multiple correct answers (use comma-separated list)',
-        level: 'warning',
-      });
     }
-
-    // Validate each answer format
-    const invalidAnswers = answers.filter(
-      ans => !validAnswers.includes(ans) && !validNumbers.includes(ans)
-    );
-
-    if (invalidAnswers.length > 0) {
-      errors.push({
-        field: 'Correct Answers',
-        message: `Invalid answer format: "${invalidAnswers.join(', ')}" (use A-H or 1-8, comma-separated)`,
-        level: 'critical',
-      });
-    }
+  } else if (columnMapping.answerCol) {
+    errors.push({
+      field: 'Correct Answers',
+      message: 'No correct answers specified',
+      level: 'critical',
+    });
   }
 }
 
@@ -492,9 +447,114 @@ export function validateAllQuestions(
   rows: QuestionData[],
   columnMapping: any
 ): ValidationResult[] {
-  return rows.map((row, index) =>
-    validateQuestionRow(row, index + 1, columnMapping)
-  );
+  // First, detect duplicates across all questions
+  const duplicates = detectDuplicates(rows, columnMapping);
+
+  // Validate each question and add duplicate warnings
+  return rows.map((row, index) => {
+    const result = validateQuestionRow(row, index + 1, columnMapping);
+    
+    // Add duplicate warning if this question is a duplicate
+    if (duplicates.has(row.id)) {
+      const duplicateIds = duplicates.get(row.id)!;
+      const duplicateRowNumbers = duplicateIds
+        .map(id => {
+          const idx = rows.findIndex(r => r.id === id);
+          return idx !== -1 ? idx + 1 : null;
+        })
+        .filter(n => n !== null)
+        .sort((a, b) => a! - b!);
+
+      const duplicateWarning: ValidationError = {
+        field: 'Duplicate',
+        message: `Duplicate question detected. Also appears in row(s): ${duplicateRowNumbers.join(', ')}`,
+        level: 'warning',
+      };
+
+      // Add to warnings if not already present
+      if (!result.warnings.some(w => w.field === 'Duplicate')) {
+        result.warnings.unshift(duplicateWarning); // Add at the beginning for visibility
+        result.warningCount = result.warnings.length;
+        
+        // Update status if currently valid
+        if (result.status === 'valid') {
+          result.status = 'caution';
+        }
+      }
+    }
+
+    return result;
+  });
+}
+
+/**
+ * Generate a fingerprint for a question to detect duplicates
+ * Uses question text and options (if MCQ) for matching
+ */
+function getQuestionFingerprint(
+  row: QuestionData,
+  columnMapping: any
+): string {
+  const questionText = columnMapping.questionCol 
+    ? (row[columnMapping.questionCol] || '')
+    : '';
+  
+  // Normalize: lowercase, remove extra spaces, trim
+  let fingerprint = String(questionText)
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // For MCQ, include options in fingerprint for more precise matching
+  if (columnMapping.optionCols && columnMapping.optionCols.length > 0) {
+    const options = columnMapping.optionCols
+      .map((col: string) => row[col] || '')
+      .filter((opt: string) => opt.trim() !== '')
+      .map((opt: string) => String(opt).toLowerCase().replace(/\s+/g, ' ').trim())
+      .sort() // Sort to handle option order variations
+      .join('||');
+    
+    if (options) {
+      fingerprint += '::OPTIONS::' + options;
+    }
+  }
+
+  return fingerprint;
+}
+
+/**
+ * Detect duplicate questions in a batch
+ * Returns a Map of row IDs to arrays of duplicate row IDs
+ */
+function detectDuplicates(
+  rows: QuestionData[],
+  columnMapping: any
+): Map<string, string[]> {
+  const fingerprintMap = new Map<string, string[]>();
+  const duplicateMap = new Map<string, string[]>();
+
+  // Build fingerprint map
+  rows.forEach(row => {
+    const fingerprint = getQuestionFingerprint(row, columnMapping);
+    if (!fingerprint) return; // Skip if no question text
+
+    if (!fingerprintMap.has(fingerprint)) {
+      fingerprintMap.set(fingerprint, []);
+    }
+    fingerprintMap.get(fingerprint)!.push(row.id);
+  });
+
+  // Find duplicates (fingerprints with more than 1 question)
+  fingerprintMap.forEach((rowIds, fingerprint) => {
+    if (rowIds.length > 1) {
+      // All questions with this fingerprint are duplicates of each other
+      rowIds.forEach(rowId => {
+        duplicateMap.set(rowId, rowIds.filter(id => id !== rowId));
+      });
+    }
+  });
+
+  return duplicateMap;
 }
 
 /**
