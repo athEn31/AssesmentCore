@@ -1,0 +1,17 @@
+# AssessmentCore robots.txt
+# Allow all search engines to crawl the site
+
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /api
+
+# Specific rules for popular search engines
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+# Sitemaps
+Sitemap: https://assessmentcore.vercel.app/sitemap.xml
