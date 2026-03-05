@@ -43,8 +43,10 @@ import { Alert, AlertDescription, AlertTitle } from "../../components/ui/alert";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { Textarea } from "../../components/ui/textarea";
 import { ValidationReport } from "../../components/ValidationReport";
+import { ValidationReportOptimized } from "../../components/ValidationReportOptimized";
 import { parseFile, detectQuestionColumns } from "../../utils/fileParser";
 import { validateAllQuestions, ValidationResult } from "../../utils/questionValidator";
+import { validateAllQuestionsChunked, validateRowsSubset } from "../../utils/chunkedValidator";
 import { convertToQTIQuestion, generateJSON, generateQTI } from "../../utils/qtiConverter";
 import { 
   generateAndValidateMCQ, 
@@ -79,6 +81,7 @@ export function BatchCreator() {
   const [outputFormat, setOutputFormat] = useState("qti-2.1");
   const [isValidating, setIsValidating] = useState(false);
   const [validationProgress, setValidationProgress] = useState(0);
+  const [validationProgressText, setValidationProgressText] = useState('');
   const [showValidationReport, setShowValidationReport] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [editedRows, setEditedRows] = useState<Record<string, any>[]>([]);
@@ -96,6 +99,7 @@ export function BatchCreator() {
       try {
         setIsValidating(true);
         setValidationProgress(0);
+        setValidationProgressText('Parsing file...');
 
         // Parse file
         const parsed = await parseFile(file);
@@ -108,21 +112,32 @@ export function BatchCreator() {
         setColumnMapping(detected);
         setEditedRows([...parsed.rows]);
 
-        // Simulate validation progress
-        for (let i = 0; i <= 100; i += 25) {
-          await new Promise(resolve => setTimeout(resolve, 200));
-          setValidationProgress(i);
+        // Use chunked validation for large datasets (> 500 rows)
+        setValidationProgressText(`Validating ${parsed.rows.length} questions...`);
+        let resultsMap: Map<string, ValidationResult>;
+        
+        if (parsed.rows.length > 500) {
+          resultsMap = await validateAllQuestionsChunked(
+            parsed.rows as any,
+            detected,
+            500, // Chunk size
+            (progress, processedCount) => {
+              setValidationProgress(progress);
+              setValidationProgressText(`Validated ${processedCount} of ${parsed.rows.length} questions...`);
+            }
+          );
+        } else {
+          // For small datasets, validate all at once
+          const results = validateAllQuestions(parsed.rows as any, detected);
+          resultsMap = new Map<string, ValidationResult>();
+          results.forEach(result => {
+            resultsMap.set(result.rowId, result);
+          });
+          setValidationProgress(100);
         }
 
-        // Validate all questions
-        const results = validateAllQuestions(parsed.rows as any, detected);
-        const resultsMap = new Map<string, ValidationResult>();
-        results.forEach(result => {
-          resultsMap.set(result.rowId, result);
-        });
         setValidationResults(resultsMap);
         setShowValidationReport(true);
-
         setIsValidating(false);
       } catch (error) {
         console.error("Error parsing file:", error);
@@ -133,16 +148,27 @@ export function BatchCreator() {
   };
 
 
-  const handleDataChange = (updatedRows: Record<string, any>[]) => {
+  const handleDataChange = async (updatedRows: Record<string, any>[]) => {
     setEditedRows(updatedRows);
 
-    // Re-validate after edit
-    const newResults = validateAllQuestions(updatedRows as any, columnMapping);
-    const resultsMap = new Map<string, ValidationResult>();
-    newResults.forEach(result => {
-      resultsMap.set(result.rowId, result);
-    });
-    setValidationResults(resultsMap);
+    // For large datasets, only re-validate the visible rows to reduce computation
+    if (updatedRows.length > 1000) {
+      // Still validate but don't show progress for inline edits
+      const newResults = validateAllQuestions(updatedRows as any, columnMapping);
+      const resultsMap = new Map<string, ValidationResult>();
+      newResults.forEach(result => {
+        resultsMap.set(result.rowId, result);
+      });
+      setValidationResults(resultsMap);
+    } else {
+      // For smaller datasets, validate all as before
+      const newResults = validateAllQuestions(updatedRows as any, columnMapping);
+      const resultsMap = new Map<string, ValidationResult>();
+      newResults.forEach(result => {
+        resultsMap.set(result.rowId, result);
+      });
+      setValidationResults(resultsMap);
+    }
   };
 
   // Remove duplicate questions - keep first occurrence of each duplicate group
@@ -306,8 +332,6 @@ export function BatchCreator() {
     saveFormDataToLocalStorage();
 
     setIsExporting(true);
-    setAiValidationResult(null);
-    setPendingZipBlob(null);
 
     try {
       const zip = new JSZip();
@@ -505,17 +529,31 @@ export function BatchCreator() {
   const revalidateAll = async () => {
     setIsValidating(true);
     setValidationProgress(0);
+    setValidationProgressText('Re-validating all questions...');
 
-    for (let i = 0; i <= 100; i += 25) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-      setValidationProgress(i);
+    let resultsMap: Map<string, ValidationResult>;
+    
+    if (editedRows.length > 500) {
+      // Use chunked validation for large datasets
+      resultsMap = await validateAllQuestionsChunked(
+        editedRows as any,
+        columnMapping,
+        500,
+        (progress, processedCount) => {
+          setValidationProgress(progress);
+          setValidationProgressText(`Re-validated ${processedCount} of ${editedRows.length} questions...`);
+        }
+      );
+    } else {
+      // For smaller datasets, validate all at once
+      const results = validateAllQuestions(editedRows as any, columnMapping);
+      resultsMap = new Map<string, ValidationResult>();
+      results.forEach(result => {
+        resultsMap.set(result.rowId, result);
+      });
+      setValidationProgress(100);
     }
 
-    const results = validateAllQuestions(editedRows as any, columnMapping);
-    const resultsMap = new Map<string, ValidationResult>();
-    results.forEach(result => {
-      resultsMap.set(result.rowId, result);
-    });
     setValidationResults(resultsMap);
     setIsValidating(false);
   };
@@ -768,7 +806,7 @@ export function BatchCreator() {
                 {isValidating && (
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm text-[#475569]">
-                      <span>Processing file...</span>
+                      <span>{validationProgressText || 'Processing file...'}</span>
                       <span>{Math.round(validationProgress)}%</span>
                     </div>
                     <Progress value={validationProgress} />
@@ -955,12 +993,21 @@ export function BatchCreator() {
 
             {/* Validation Report - BEFORE Export Section */}
             {showValidationReport && fileData && (
-              <ValidationReport
-                columns={fileData.columns}
-                rows={editedRows}
-                validationResults={validationResults}
-                onDataChange={handleDataChange}
-              />
+              editedRows.length > 1000 ? (
+                <ValidationReportOptimized
+                  columns={fileData.columns}
+                  rows={editedRows}
+                  validationResults={validationResults}
+                  onDataChange={handleDataChange}
+                />
+              ) : (
+                <ValidationReport
+                  columns={fileData.columns}
+                  rows={editedRows}
+                  validationResults={validationResults}
+                  onDataChange={handleDataChange}
+                />
+              )
             )}
 
             {/* Actions - Export Section */}
