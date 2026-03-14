@@ -167,7 +167,7 @@ export const authService = {
         .from('user_profiles')
         .select('*')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
       if (error) {
         console.error('Error fetching user profile:', error);
@@ -223,6 +223,7 @@ export const authService = {
           {
             user_id: userId,
             exports_count: 1,
+            total_questions_converted: 0,
           },
         ]);
 
@@ -253,6 +254,53 @@ export const authService = {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to track export',
+      };
+    }
+  },
+
+  // Track questions converted
+  async trackQuestionsConverted(userId: string, questionCount: number): Promise<AuthResponse> {
+    try {
+      const usage = await this.getUserUsage(userId);
+
+      if (!usage) {
+        const { error } = await supabase.from('user_usage').insert([
+          {
+            user_id: userId,
+            exports_count: 0,
+            total_questions_converted: questionCount,
+          },
+        ]);
+
+        if (error) {
+          return { success: false, error: error.message };
+        }
+
+        return {
+          success: true,
+          message: 'Questions tracked successfully!',
+        };
+      }
+
+      const { error } = await supabase
+        .from('user_usage')
+        .update({
+          total_questions_converted: (usage.total_questions_converted || 0) + questionCount,
+        })
+        .eq('user_id', userId);
+
+      if (error) {
+        return { success: false, error: error.message };
+      }
+
+      return {
+        success: true,
+        message: 'Questions tracked successfully!',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to track questions',
       };
     }
   },

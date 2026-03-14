@@ -6,12 +6,13 @@
 import { Question, QuestionBuilder, GenerationError } from '../../types';
 import { escapeXml, isValidIdentifier } from '../../xmlUtils';
 import { validateXml } from '../../xmlValidator';
+import { convertTextWithMath, stripMath } from '../../../app/utils/mathmlConverter';
 
 class MCQBuilder implements QuestionBuilder {
   /**
    * Generate QTI 2.1 XML for MCQ question
    */
-  generate(question: Question): string {
+  async generate(question: Question): Promise<string> {
     // Validate question data
     this.validateQuestion(question);
 
@@ -79,25 +80,28 @@ class MCQBuilder implements QuestionBuilder {
   /**
    * Build QTI 2.1 XML structure
    */
-  private buildXml(question: Question): string {
+  private async buildXml(question: Question): Promise<string> {
     const escapedId = escapeXml(question.identifier);
-    const escapedTitle = escapeXml(question.stem.substring(0, 100));
-    const escapedStem = escapeXml(question.stem);
+    const escapedTitle = escapeXml(stripMath(question.stem).substring(0, 100));
+    const stemContent = await convertTextWithMath(question.stem);
     const correctAnswer = question.correct_answer.trim().toUpperCase();
 
     // Build simpleChoice elements
-    const simpleChoices = question.options
-      .map((option: string, index: number) => {
+    const simpleChoices = (
+      await Promise.all(
+        question.options.map(async (option: string, index: number) => {
         const identifier = String.fromCharCode(65 + index); // A, B, C, D...
-        const escapedOption = escapeXml(option);
-        return `      <simpleChoice identifier="${identifier}">${escapedOption}</simpleChoice>`;
-      })
-      .join('\n');
+        const optionContent = await convertTextWithMath(option);
+        return `      <simpleChoice identifier="${identifier}">${optionContent}</simpleChoice>`;
+        })
+      )
+    ).join('\n');
 
     // Build the complete XML
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <assessmentItem
   xmlns="http://www.imsglobal.org/xsd/imsqti_v2p1"
+  xmlns:m="http://www.w3.org/1998/Math/MathML"
   identifier="${escapedId}"
   title="${escapedTitle}"
   adaptive="false"
@@ -111,7 +115,7 @@ class MCQBuilder implements QuestionBuilder {
 
   <itemBody>
     <choiceInteraction responseIdentifier="RESPONSE" shuffle="true" maxChoices="1">
-      <prompt>${escapedStem}</prompt>
+      <prompt>${stemContent}</prompt>
 ${simpleChoices}
     </choiceInteraction>
   </itemBody>
@@ -141,7 +145,7 @@ export function createMCQBuilder(): QuestionBuilder {
  * Generate QTI XML for a single MCQ question
  * Throws error if generation fails
  */
-export function generateMCQXml(question: Question): string {
+export async function generateMCQXml(question: Question): Promise<string> {
   const builder = createMCQBuilder();
   return builder.generate(question);
 }
@@ -150,11 +154,11 @@ export function generateMCQXml(question: Question): string {
  * Generate and validate QTI XML for MCQ question
  * Returns error if validation fails
  */
-export function generateAndValidateMCQ(
+export async function generateAndValidateMCQ(
   question: Question
-): { xml: string } | { error: GenerationError } {
+): Promise<{ xml: string } | { error: GenerationError }> {
   try {
-    const xml = generateMCQXml(question);
+    const xml = await generateMCQXml(question);
     const builder = createMCQBuilder();
 
     if (!builder.validate(xml)) {

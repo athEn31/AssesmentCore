@@ -58,7 +58,7 @@ function detectQuestionTypeInternal(
 ): string {
   // If type column exists, use it
   if (columnMapping.typeCol && row[columnMapping.typeCol]) {
-    return (row[columnMapping.typeCol] as string).toLowerCase().trim();
+    return String(row[columnMapping.typeCol]).toLowerCase().trim();
   }
 
   // Detect based on structure
@@ -74,7 +74,7 @@ function detectQuestionTypeInternal(
 
   // If has 2 options that are like yes/no or true/false
   if (options.length === 2) {
-    const optionTexts = options.map((o: any) => (o as string).toLowerCase().trim());
+    const optionTexts = options.map((o: any) => String(o).toLowerCase().trim());
     if (
       (optionTexts.includes('true') && optionTexts.includes('false')) ||
       (optionTexts.includes('yes') && optionTexts.includes('no'))
@@ -229,7 +229,7 @@ function validateMCQ(
   }
 
   // Check for duplicate options
-  const uniqueOptions = new Set(optionValues.map((o: any) => (o as string).toLowerCase().trim()));
+  const uniqueOptions = new Set(optionValues.map((o: any) => String(o).toLowerCase().trim()));
   if (uniqueOptions.size < optionValues.length) {
     errors.push({
       field: 'Options',
@@ -286,7 +286,7 @@ function validateMSQ(
 
   // Check correct answers exist
   if (columnMapping.answerCol && row[columnMapping.answerCol]) {
-    const answersText = (row[columnMapping.answerCol] as string).trim();
+    const answersText = String(row[columnMapping.answerCol]).trim();
     
     if (!answersText) {
       errors.push({
@@ -326,7 +326,7 @@ function validateShortAnswer(
 
   // Check if answer exists and is meaningful
   if (columnMapping.answerCol && row[columnMapping.answerCol]) {
-    const answer = (row[columnMapping.answerCol] as string).trim();
+    const answer = String(row[columnMapping.answerCol]).trim();
     if (answer.length < 2) {
       errors.push({
         field: 'Correct Answer',
@@ -367,7 +367,7 @@ function validateOrder(
     return;
   }
 
-  const orderItems = (row[columnMapping.orderCol] as string).split(',').filter(item => item.trim().length > 0);
+  const orderItems = String(row[columnMapping.orderCol]).split(',').filter(item => item.trim().length > 0);
 
   if (orderItems.length < 2) {
     errors.push({
@@ -508,8 +508,8 @@ function getQuestionFingerprint(
   // For MCQ, include options in fingerprint for more precise matching
   if (columnMapping.optionCols && columnMapping.optionCols.length > 0) {
     const options = columnMapping.optionCols
-      .map((col: string) => row[col] || '')
-      .filter((opt: string) => opt.trim() !== '')
+      .map((col: string) => row[col] != null ? String(row[col]) : '')
+      .filter((opt: string) => String(opt).trim() !== '')
       .map((opt: string) => String(opt).toLowerCase().replace(/\s+/g, ' ').trim())
       .sort() // Sort to handle option order variations
       .join('||');

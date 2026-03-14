@@ -15,11 +15,11 @@ import { generateAndValidateTextEntry30 } from './builders/qti30/textEntryBuilde
 /**
  * Generate QTI XML based on question type and version
  */
-export function generateQTIByVersion(
+export async function generateQTIByVersion(
   question: Question,
   version: 'qti-1.2' | 'qti-2.1' | 'qti-3.0' = 'qti-2.1',
   questionType: 'MCQ' | 'ShortAnswer' = 'MCQ'
-): { xml: string } | { error: GenerationError } {
+): Promise<{ xml: string } | { error: GenerationError }> {
   // Route to the correct builder based on version and type
   if (questionType === 'MCQ') {
     switch (version) {
@@ -83,7 +83,7 @@ export async function generateQTIForQuestion(
     }
 
     // Generate XML based on question type
-    const result = generateAndValidateMCQ(question);
+    const result = await generateAndValidateMCQ(question);
 
     if ('error' in result) {
       return {

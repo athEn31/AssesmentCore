@@ -30,7 +30,7 @@ export interface GenerationSummary {
 }
 
 export interface QuestionBuilder {
-  generate(question: Question): string;
+  generate(question: Question): Promise<string>;
   validate(xml: string): boolean;
 }
 

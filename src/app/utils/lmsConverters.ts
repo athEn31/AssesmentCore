@@ -210,7 +210,7 @@ function detectQuestionType(question: any, columnMapping: any): string {
  */
 function getAnswerIndex(answer: string, options: string[]): number {
   if (!answer) return 0;
-  const normalized = answer.toUpperCase().trim();
+  const normalized = String(answer).toUpperCase().trim();
 
   // Single letter A-H
   if (/^[A-H]$/.test(normalized)) {
@@ -222,7 +222,7 @@ function getAnswerIndex(answer: string, options: string[]): number {
   }
   // Full-text match
   const idx = options.findIndex(
-    (o) => o.toLowerCase().trim() === answer.toLowerCase().trim()
+    (o) => String(o).toLowerCase().trim() === String(answer).toLowerCase().trim()
   );
   if (idx !== -1) return idx;
 

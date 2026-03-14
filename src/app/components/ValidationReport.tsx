@@ -22,6 +22,7 @@ import {
   CollapsibleTrigger,
 } from './ui/collapsible';
 import { ValidationResult } from '../utils/questionValidator';
+import { MathMLRenderer } from './MathMLRenderer';
 
 interface ValidationReportProps {
   columns: string[];
@@ -518,9 +519,12 @@ export function ValidationReport({
                     {/* Question Text */}
                     <div className="bg-white p-3 rounded border border-gray-200">
                       <p className="text-xs text-gray-600 font-semibold mb-1">Question Text:</p>
-                      <p className="text-sm text-gray-900">
-                        {row.question || row.questionText || 'Not available'}
-                      </p>
+                      <div className="text-sm text-gray-900">
+                        <MathMLRenderer 
+                          content={row.question || row.questionText || 'Not available'}
+                          className="text-sm text-gray-900"
+                        />
+                      </div>
                     </div>
 
                     {/* Validation Issues */}

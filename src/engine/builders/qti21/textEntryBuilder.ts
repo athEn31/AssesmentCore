@@ -6,12 +6,13 @@
 import { Question, QuestionBuilder, GenerationError } from '../../types';
 import { escapeXml, isValidIdentifier } from '../../xmlUtils';
 import { validateXml } from '../../xmlValidator';
+import { convertTextWithMath, stripMath } from '../../../app/utils/mathmlConverter';
 
 class TextEntryBuilder implements QuestionBuilder {
   /**
    * Generate QTI 3.0 XML for Text Entry question
    */
-  generate(question: Question): string {
+  async generate(question: Question): Promise<string> {
     // Validate question data
     this.validateQuestion(question);
 
@@ -39,10 +40,10 @@ class TextEntryBuilder implements QuestionBuilder {
   /**
    * Build QTI 2.1 XML structure for text entry question
    */
-  private buildXml(question: Question): string {
+  private async buildXml(question: Question): Promise<string> {
     const escapedId = escapeXml(question.identifier);
-    const escapedTitle = escapeXml(question.stem.substring(0, 100));
-    const escapedStem = escapeXml(question.stem);
+    const escapedTitle = escapeXml(stripMath(question.stem).substring(0, 100));
+    const stemContent = await convertTextWithMath(question.stem);
     const escapedAnswer = escapeXml(question.correct_answer);
 
     // Calculate expected length based on answer length
@@ -52,6 +53,7 @@ class TextEntryBuilder implements QuestionBuilder {
     let xml = `<?xml version="1.0" encoding="UTF-8"?>
 <assessmentItem xmlns="http://www.imsglobal.org/xsd/imsqti_v2p1"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:m="http://www.w3.org/1998/Math/MathML"
   xsi:schemaLocation="http://www.imsglobal.org/xsd/imsqti_v2p1 http://www.imsglobal.org/xsd/qti/qtiv2p1/imsqti_v2p1.xsd"
   identifier="${escapedId}"
   title="${escapedTitle}"
@@ -72,7 +74,7 @@ class TextEntryBuilder implements QuestionBuilder {
 
   <itemBody>
     <div>
-      <p>${escapedStem}</p>
+      <p>${stemContent}</p>
       <textEntryInteraction responseIdentifier="RESPONSE" expectedLength="${expectedLength}"/>
     </div>
   </itemBody>
@@ -104,7 +106,7 @@ export function createTextEntryBuilder(): QuestionBuilder {
  * Generate QTI XML for a single Text Entry question
  * Throws error if generation fails
  */
-export function generateTextEntryXml(question: Question): string {
+export async function generateTextEntryXml(question: Question): Promise<string> {
   const builder = createTextEntryBuilder();
   return builder.generate(question);
 }
@@ -113,11 +115,11 @@ export function generateTextEntryXml(question: Question): string {
  * Generate and validate QTI XML for Text Entry question
  * Returns error if validation fails
  */
-export function generateAndValidateTextEntry(
+export async function generateAndValidateTextEntry(
   question: Question
-): { xml: string } | { error: GenerationError } {
+): Promise<{ xml: string } | { error: GenerationError }> {
   try {
-    const xml = generateTextEntryXml(question);
+    const xml = await generateTextEntryXml(question);
     const builder = createTextEntryBuilder();
 
     if (!builder.validate(xml)) {

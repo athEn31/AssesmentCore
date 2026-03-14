@@ -155,6 +155,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const trackQuestionsConverted = async (count: number) => {
+    if (user) {
+      await authService.trackQuestionsConverted(user.id, count);
+      const usage = await authService.getUserUsage(user.id);
+      setUserUsage(usage);
+    }
+  };
+
   const refreshUsage = async () => {
     if (user) {
       const usage = await authService.getUserUsage(user.id);
@@ -182,6 +190,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     verifyEmail,
     resendVerificationEmail,
     trackExport,
+    trackQuestionsConverted,
     refreshUsage,
     resetPasswordForEmail,
     updatePassword,

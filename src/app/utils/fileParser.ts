@@ -126,7 +126,21 @@ export function detectQuestionColumns(columns: string[]): {
 } {
   const lowerColumns = columns.map(c => c.toLowerCase());
 
-  const result: any = {};
+  const result: {
+    questionCol?: string;
+    answerCol?: string;
+    optionCols?: string[];
+    typeCol?: string;
+    difficultyCol?: string;
+    solutionCol?: string;
+    pointsCol?: string;
+    titleCol?: string;
+    [key: string]: any;
+  } = {};
+
+  // Detect title column
+  const titlePatterns = ['title', 'item_title', 'question_title', 'label', 'name'];
+  result.titleCol = columns[lowerColumns.findIndex(c => titlePatterns.some(p => c.includes(p)))];
 
   // Detect question column
   const questionPatterns = ['question', 'query', 'problem', 'stem', 'text'];
@@ -186,6 +200,10 @@ export function detectQuestionColumns(columns: string[]): {
   // Detect order column (for ordering interaction)
   const orderPatterns = ['order', 'sequence', 'arrange', 'order_items'];
   result.orderCol = columns[lowerColumns.findIndex(c => orderPatterns.some(p => c.includes(p)))];
+
+  // Detect image column (for media support)
+  const imagePatterns = ['image', 'img', 'picture', 'media', 'figure', 'graphic'];
+  result.imageCol = columns[lowerColumns.findIndex(c => imagePatterns.some(p => c.includes(p)))];
 
   return result;
 }

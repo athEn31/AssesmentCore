@@ -1,3 +1,5 @@
+import { createQTIParaWithMath, createQTIChoiceWithMath, convertTextWithMath, stripMath } from './mathmlConverter';
+
 export interface QTIQuestion {
   id: string;
   type: string;
@@ -30,10 +32,19 @@ export function convertToQTIQuestion(
   questionType: string,
   columnMapping: any
 ): QTIQuestion {
+  // Determine title: 1. Use title col if exists, 2. Fallback to stripped question text
+  let title = '';
+  if (columnMapping.titleCol && row[columnMapping.titleCol]) {
+    title = row[columnMapping.titleCol].toString();
+  } else {
+    const rawQuestion = row[columnMapping.questionCol] || '';
+    title = stripMath(rawQuestion).substring(0, 100) || `Question ${row.id}`;
+  }
+
   const question: QTIQuestion = {
     id: row.id || `q_${Date.now()}`,
     type: questionType,
-    title: row[columnMapping.questionCol]?.substring(0, 100) || `Question ${row.id}`,
+    title,
     questionText: row[columnMapping.questionCol] || '',
     metadata: {},
   };
@@ -87,7 +98,7 @@ function processMCQQuestion(question: QTIQuestion, row: any, columnMapping: any)
 
   // Set correct answer
   if (columnMapping.answerCol && row[columnMapping.answerCol]) {
-    const rawAnswer = (row[columnMapping.answerCol] as string).toUpperCase().trim();
+    const rawAnswer = String(row[columnMapping.answerCol]).toUpperCase().trim();
     const optionLabels = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
     let correctId = '';
 
@@ -120,7 +131,7 @@ function processTrueFalseQuestion(question: QTIQuestion, row: any, columnMapping
   ];
 
   if (columnMapping.answerCol && row[columnMapping.answerCol]) {
-    const answer = (row[columnMapping.answerCol] as string).toLowerCase().trim();
+    const answer = String(row[columnMapping.answerCol]).toLowerCase().trim();
     const correctId = ['true', 't', 'yes', 'y'].includes(answer) ? 'T' : 'F';
     question.correctAnswer = correctId;
     question.options.forEach(opt => {
@@ -141,10 +152,11 @@ function processShortAnswerQuestion(question: QTIQuestion, row: any, columnMappi
 /**
  * Generate QTI 2.1 XML format
  */
-export function generateQTI21XML(question: QTIQuestion): string {
+export async function generateQTI21XML(question: QTIQuestion): Promise<string> {
   let xml = `<?xml version="1.0" encoding="UTF-8"?>
 <assessmentItem xmlns="http://www.imsglobal.org/xsd/imsqti_v2p1"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:m="http://www.w3.org/1998/Math/MathML"
   xsi:schemaLocation="http://www.imsglobal.org/xsd/imsqti_v2p1 http://www.imsglobal.org/xsd/qti/qtiv2p1/imsqti_v2p1.xsd"
   identifier="${question.id}"
   title="${escapeXml(question.title)}"
@@ -189,16 +201,22 @@ export function generateQTI21XML(question: QTIQuestion): string {
   // Item body
   xml += `
   <itemBody>
-    <div>
-      <p>${escapeXml(question.questionText)}</p>`;
+    <div>`;
+
+  // Add question text — always use MathML-safe conversion
+  const questionContent = convertTextWithMath(question.questionText);
+  xml += `
+      <p>${questionContent}</p>`;
 
   if ((question.type === 'mcq' || question.type === 'truefalse') && question.options) {
     xml += `
       <choiceInteraction responseIdentifier="RESPONSE" shuffle="false" maxChoices="1">`;
-    question.options.forEach(option => {
+    for (const option of question.options) {
+      // Always convert option content for MathML safety
+      const optionContent = convertTextWithMath(option.content);
       xml += `
-        <simpleChoice identifier="${option.id}">${escapeXml(option.content)}</simpleChoice>`;
-    });
+        <simpleChoice identifier="${option.id}">${optionContent}</simpleChoice>`;
+    }
     xml += `
       </choiceInteraction>`;
   } else if (question.type === 'shortanswer' || !question.options) {
@@ -214,10 +232,12 @@ export function generateQTI21XML(question: QTIQuestion): string {
   xml += `
     </div>`;
 
+  // Add explanation — always use MathML-safe conversion
   if (question.explanation) {
+    const explanationContent = convertTextWithMath(question.explanation);
     xml += `
     <feedbackBlock identifier="fb1" outcomeIdentifier="ANSWER_FEEDBACK" showHide="show">
-      <p>${escapeXml(question.explanation)}</p>
+      <p>${explanationContent}</p>
     </feedbackBlock>`;
   }
 
@@ -233,11 +253,12 @@ export function generateQTI21XML(question: QTIQuestion): string {
 /**
  * Generate QTI 2.2 XML format
  */
-export function generateQTI22XML(question: QTIQuestion): string {
+export async function generateQTI22XML(question: QTIQuestion): Promise<string> {
   // Similar structure to QTI 2.1 with minor namespace differences
   let xml = `<?xml version="1.0" encoding="UTF-8"?>
 <assessmentItem xmlns="http://www.imsglobal.org/xsd/imsqti_v2p2"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:m="http://www.w3.org/1998/Math/MathML"
   xsi:schemaLocation="http://www.imsglobal.org/xsd/imsqti_v2p2 http://www.imsglobal.org/xsd/qti/qtiv2p2/imsqti_v2p2.xsd"
   identifier="${question.id}"
   title="${escapeXml(question.title)}"
@@ -282,16 +303,22 @@ export function generateQTI22XML(question: QTIQuestion): string {
   // Item body
   xml += `
   <itemBody>
-    <div>
-      <p>${escapeXml(question.questionText)}</p>`;
+    <div>`;
+
+  // Add question text — always use MathML-safe conversion
+  const questionContent22 = convertTextWithMath(question.questionText);
+  xml += `
+      <p>${questionContent22}</p>`;
 
   if ((question.type === 'mcq' || question.type === 'truefalse') && question.options) {
     xml += `
       <choiceInteraction responseIdentifier="RESPONSE" shuffle="false" maxChoices="1">`;
-    question.options.forEach(option => {
+    for (const option of question.options) {
+      // Always convert option content for MathML safety
+      const optionContent = convertTextWithMath(option.content);
       xml += `
-        <simpleChoice identifier="${option.id}">${escapeXml(option.content)}</simpleChoice>`;
-    });
+        <simpleChoice identifier="${option.id}">${optionContent}</simpleChoice>`;
+    }
     xml += `
       </choiceInteraction>`;
   } else if (question.type === 'shortanswer' || !question.options) {
@@ -307,10 +334,12 @@ export function generateQTI22XML(question: QTIQuestion): string {
   xml += `
     </div>`;
 
+  // Add explanation — always use MathML-safe conversion
   if (question.explanation) {
+    const explanationContent22 = convertTextWithMath(question.explanation);
     xml += `
     <feedbackBlock identifier="fb1" outcomeIdentifier="ANSWER_FEEDBACK" showHide="show">
-      <p>${escapeXml(question.explanation)}</p>
+      <p>${explanationContent22}</p>
     </feedbackBlock>`;
   }
 
@@ -326,20 +355,20 @@ export function generateQTI22XML(question: QTIQuestion): string {
 /**
  * Generate QTI output in requested format
  */
-export function generateQTI(
+export async function generateQTI(
   question: QTIQuestion,
   version: string = '2.1',
   format: 'xml' | 'json' = 'xml'
-): QTIOutput {
+): Promise<QTIOutput> {
   const output: QTIOutput = {
     version,
   };
 
   if (format === 'xml' || format === undefined) {
     if (version === '2.2') {
-      output.xml = generateQTI22XML(question);
+      output.xml = await generateQTI22XML(question);
     } else {
-      output.xml = generateQTI21XML(question);
+      output.xml = await generateQTI21XML(question);
     }
   } else if (format === 'json') {
     output.json = question;
@@ -348,12 +377,13 @@ export function generateQTI(
   return output;
 }
 
+
 /**
  * Escape XML special characters
  */
-function escapeXml(text: string): string {
-  if (!text) return '';
-  return text
+export function escapeXml(text: string): string {
+  if (text == null) return '';
+  return String(text)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

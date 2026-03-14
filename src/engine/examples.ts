@@ -15,7 +15,7 @@ import {
 /**
  * Example 1: Generate QTI XML for a simple MCQ question
  */
-function exampleBasicMCQ(): void {
+async function exampleBasicMCQ(): Promise<void> {
   console.log('=== Example 1: Basic MCQ Generation ===\n');
 
   const question: Question = {
@@ -30,7 +30,7 @@ function exampleBasicMCQ(): void {
   };
 
   try {
-    const xml = generateMCQXml(question);
+    const xml = await generateMCQXml(question);
     console.log('Generated QTI XML:');
     console.log(xml);
   } catch (error) {
@@ -43,7 +43,7 @@ function exampleBasicMCQ(): void {
 /**
  * Example 2: Generate and validate MCQ
  */
-function exampleValidation(): void {
+async function exampleValidation(): Promise<void> {
   console.log('=== Example 2: Generation with Validation ===\n');
 
   const question: Question = {
@@ -57,7 +57,7 @@ function exampleValidation(): void {
     validation_status: 'Valid',
   };
 
-  const result = generateAndValidateMCQ(question);
+  const result = await generateAndValidateMCQ(question);
 
   if ('error' in result) {
     console.error('Generation failed:', result.error.message);
@@ -174,7 +174,7 @@ function exampleValidateQuestions(): void {
 /**
  * Example 5: Error handling for invalid questions
  */
-function exampleErrorHandling(): void {
+async function exampleErrorHandling(): Promise<void> {
   console.log('=== Example 5: Error Handling ===\n');
 
   const invalidQuestions: Question[] = [
@@ -212,13 +212,13 @@ function exampleErrorHandling(): void {
 
   console.log('Testing error handling for invalid questions:\n');
 
-  invalidQuestions.forEach((question) => {
-    const result = generateAndValidateMCQ(question);
+  for (const question of invalidQuestions) {
+    const result = await generateAndValidateMCQ(question);
     if ('error' in result) {
       console.log(`✗ ${question.identifier || 'Unknown'}`);
       console.log(`  Error: ${result.error.message}`);
     }
-  });
+  }
 
   console.log('\n');
 }
@@ -226,7 +226,7 @@ function exampleErrorHandling(): void {
 /**
  * Example 6: Using with numeric answer identifiers
  */
-function exampleNumericAnswers(): void {
+async function exampleNumericAnswers(): Promise<void> {
   console.log('=== Example 6: Numeric Answer Identifiers ===\n');
 
   const question: Question = {
@@ -245,7 +245,7 @@ function exampleNumericAnswers(): void {
     validation_status: 'Valid',
   };
 
-  const result = generateAndValidateMCQ(question);
+  const result = await generateAndValidateMCQ(question);
 
   if ('error' in result) {
     console.error('Error:', result.error.message);
@@ -269,12 +269,12 @@ export async function runAllExamples(): Promise<void> {
   console.log('║     QTI Generation Engine Examples         ║');
   console.log('╚════════════════════════════════════════════╝\n');
 
-  exampleBasicMCQ();
-  exampleValidation();
+  await exampleBasicMCQ();
+  await exampleValidation();
   await exampleBatchGeneration();
   exampleValidateQuestions();
-  exampleErrorHandling();
-  exampleNumericAnswers();
+  await exampleErrorHandling();
+  await exampleNumericAnswers();
 
   console.log('╔════════════════════════════════════════════╗');
   console.log('║          Examples Completed                ║');

@@ -6,12 +6,13 @@
 import { Question, QuestionBuilder, GenerationError } from '../../types';
 import { escapeXml, isValidIdentifier } from '../../xmlUtils';
 import { validateXml } from '../../xmlValidator';
+import { convertTextWithMath, stripMath } from '../../../app/utils/mathmlConverter';
 
 class MCQBuilder12 implements QuestionBuilder {
   /**
    * Generate QTI 1.2 XML for MCQ question
    */
-  generate(question: Question): string {
+  async generate(question: Question): Promise<string> {
     // Validate question data
     this.validateQuestion(question);
 
@@ -79,29 +80,31 @@ class MCQBuilder12 implements QuestionBuilder {
   /**
    * Build QTI 1.2 XML structure for Canvas LMS compatibility
    */
-  private buildXml(question: Question): string {
+  private async buildXml(question: Question): Promise<string> {
     const escapedId = escapeXml(question.identifier);
     const idSuffixMatch = question.identifier.match(/^item_(\d{3})$/);
     const idSuffix = idSuffixMatch ? idSuffixMatch[1] : question.identifier;
     const assessmentId = escapeXml(`assessment_${idSuffix}`);
     const sectionId = escapeXml(`section_${idSuffix}`);
-    const escapedTitle = escapeXml(question.stem.substring(0, 100));
-    const escapedStem = escapeXml(question.stem);
+    const escapedTitle = escapeXml(stripMath(question.stem).substring(0, 100));
+    const stemContent = await convertTextWithMath(question.stem);
     const correctAnswer = question.correct_answer.trim().toUpperCase();
 
     // Build response labels (options)
-    const responseLabels = question.options
-      .map((option: string, index: number) => {
+    const responseLabels = (
+      await Promise.all(
+        question.options.map(async (option: string, index: number) => {
         const identifier = String.fromCharCode(65 + index); // A, B, C, D...
-        const escapedOption = escapeXml(option);
-        
+        const optionContent = await convertTextWithMath(option);
+
         return `            <response_label ident="${identifier}" rshuffle="Yes">
               <material>
-                <mattext texttype="text/plain">${escapedOption}</mattext>
+                <mattext texttype="text/html">${optionContent}</mattext>
               </material>
             </response_label>`;
-      })
-      .join('\n');
+        })
+      )
+    ).join('\n');
 
     // Build the complete QTI 1.2 XML with assessment/section wrapper for Canvas LMS
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -128,7 +131,7 @@ class MCQBuilder12 implements QuestionBuilder {
         </itemmetadata>
         <presentation>
           <material>
-            <mattext texttype="text/html">${escapedStem}</mattext>
+            <mattext texttype="text/html">${stemContent}</mattext>
           </material>
           <response_lid ident="RESPONSE" rcardinality="Single">
             <render_choice shuffle="Yes">
@@ -181,7 +184,7 @@ export function createMCQBuilder12(): QuestionBuilder {
  * Generate QTI 1.2 XML for a single MCQ question
  * Throws error if generation fails
  */
-export function generateMCQXml12(question: Question): string {
+export async function generateMCQXml12(question: Question): Promise<string> {
   const builder = createMCQBuilder12();
   return builder.generate(question);
 }
@@ -190,11 +193,11 @@ export function generateMCQXml12(question: Question): string {
  * Generate and validate QTI 1.2 XML for MCQ question
  * Returns error if validation fails
  */
-export function generateAndValidateMCQ12(
+export async function generateAndValidateMCQ12(
   question: Question
-): { xml: string } | { error: GenerationError } {
+): Promise<{ xml: string } | { error: GenerationError }> {
   try {
-    const xml = generateMCQXml12(question);
+    const xml = await generateMCQXml12(question);
     const builder = createMCQBuilder12();
 
     if (!builder.validate(xml)) {

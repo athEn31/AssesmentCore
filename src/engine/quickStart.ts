@@ -23,7 +23,7 @@ import {
  * 
  * Typical flow for generating QTI XML for a single question
  */
-function quickStartSingleQuestion() {
+async function quickStartSingleQuestion() {
   // Step 1: Create a question object
   const question: Question = {
     id: 'Q001',
@@ -37,7 +37,7 @@ function quickStartSingleQuestion() {
   };
 
   // Step 2: Generate and validate
-  const result = generateAndValidateMCQ(question);
+  const result = await generateAndValidateMCQ(question);
 
   // Step 3: Check result
   if ('error' in result) {
@@ -111,7 +111,7 @@ async function quickStartBatchProcessing() {
  * 
  * For advanced use cases where you need fine-grained control
  */
-function quickStartBuilderPattern() {
+async function quickStartBuilderPattern() {
   // Step 1: Create builder
   const builder = createMCQBuilder();
 
@@ -129,7 +129,7 @@ function quickStartBuilderPattern() {
 
   // Step 3: Generate XML
   try {
-    const xml = builder.generate(question);
+    const xml = await builder.generate(question);
     console.log('Generated XML:', xml);
 
     // Step 4: Validate XML
@@ -151,7 +151,7 @@ function quickStartBuilderPattern() {
  * 
  * Demonstrates comprehensive error handling patterns
  */
-function quickStartErrorHandling() {
+async function quickStartErrorHandling() {
   // Invalid questions that will fail
   const invalidQuestions: Question[] = [
     {
@@ -188,15 +188,15 @@ function quickStartErrorHandling() {
 
   console.log('Testing error handling:\n');
 
-  invalidQuestions.forEach((question) => {
-    const result = generateAndValidateMCQ(question);
+  for (const question of invalidQuestions) {
+    const result = await generateAndValidateMCQ(question);
 
     if ('error' in result) {
       console.log(`❌ ${question.identifier || 'Unknown'}`);
       console.log(`   Code: ${result.error.code}`);
       console.log(`   Message: ${result.error.message}\n`);
     }
-  });
+  }
 }
 
 /**
@@ -204,7 +204,7 @@ function quickStartErrorHandling() {
  * 
  * Shows how special characters are automatically escaped
  */
-function quickStartSpecialCharacters() {
+async function quickStartSpecialCharacters() {
   const question: Question = {
     id: 'Q_SPECIAL',
     upload_id: 'SPECIAL',
@@ -221,7 +221,7 @@ function quickStartSpecialCharacters() {
     validation_status: 'Valid',
   };
 
-  const result = generateAndValidateMCQ(question);
+  const result = await generateAndValidateMCQ(question);
 
   if ('error' in result) {
     console.error('Error:', result.error.message);
@@ -252,7 +252,7 @@ function quickStartSpecialCharacters() {
  * 
  * Shows how to integrate QTI generation into your application flow
  */
-function quickStartApplicationIntegration() {
+async function quickStartApplicationIntegration() {
   // Simulate receiving data from validation system
   const validatedData = {
     questionId: 'Q001',
@@ -276,7 +276,7 @@ function quickStartApplicationIntegration() {
   };
 
   // Generate QTI
-  const result = generateAndValidateMCQ(question);
+  const result = await generateAndValidateMCQ(question);
 
   if ('error' in result) {
     console.error('Failed to generate QTI:', result.error.message);
@@ -299,29 +299,29 @@ function quickStartApplicationIntegration() {
 /**
  * MAIN: Run all workflows
  */
-export function runQuickStart() {
+export async function runQuickStart() {
   console.clear();
   console.log('╔═════════════════════════════════════════╗');
   console.log('║   QTI Engine - Quick Start Workflows    ║');
   console.log('╚═════════════════════════════════════════╝\n');
 
   console.log('📋 WORKFLOW 1: Single Question\n');
-  quickStartSingleQuestion();
+  await quickStartSingleQuestion();
 
   console.log('\n📋 WORKFLOW 2: Batch Processing\n');
-  quickStartBatchProcessing().catch(console.error);
+  await quickStartBatchProcessing();
 
   console.log('\n📋 WORKFLOW 3: Builder Pattern\n');
-  quickStartBuilderPattern();
+  await quickStartBuilderPattern();
 
   console.log('\n📋 WORKFLOW 4: Error Handling\n');
-  quickStartErrorHandling();
+  await quickStartErrorHandling();
 
   console.log('\n📋 WORKFLOW 5: Special Characters\n');
-  quickStartSpecialCharacters();
+  await quickStartSpecialCharacters();
 
   console.log('\n📋 WORKFLOW 6: Application Integration\n');
-  const result = quickStartApplicationIntegration();
+  const result = await quickStartApplicationIntegration();
   console.log('Result:', result);
 
   console.log('\n╔═════════════════════════════════════════╗');

@@ -6,12 +6,13 @@
 import { Question, QuestionBuilder, GenerationError } from '../../types';
 import { escapeXml } from '../../xmlUtils';
 import { validateXml } from '../../xmlValidator';
+import { convertTextWithMath, stripMath } from '../../../app/utils/mathmlConverter';
 
 class TextEntryBuilder12 implements QuestionBuilder {
   /**
    * Generate QTI 1.2 XML for Text Entry question
    */
-  generate(question: Question): string {
+  async generate(question: Question): Promise<string> {
     // Validate question data
     this.validateQuestion(question);
 
@@ -39,14 +40,14 @@ class TextEntryBuilder12 implements QuestionBuilder {
   /**
    * Build QTI 1.2 XML structure for text entry question for Canvas LMS compatibility
    */
-  private buildXml(question: Question): string {
+  private async buildXml(question: Question): Promise<string> {
     const escapedId = escapeXml(question.identifier);
     const idSuffixMatch = question.identifier.match(/^item_(\d{3})$/);
     const idSuffix = idSuffixMatch ? idSuffixMatch[1] : question.identifier;
     const assessmentId = escapeXml(`assessment_${idSuffix}`);
     const sectionId = escapeXml(`section_${idSuffix}`);
-    const escapedTitle = escapeXml(question.stem.substring(0, 100));
-    const escapedStem = escapeXml(question.stem);
+    const escapedTitle = escapeXml(stripMath(question.stem).substring(0, 100));
+    const stemContent = await convertTextWithMath(question.stem);
     const escapedAnswer = escapeXml(question.correct_answer);
 
     // Calculate expected length based on answer length
@@ -77,7 +78,7 @@ class TextEntryBuilder12 implements QuestionBuilder {
         </itemmetadata>
         <presentation>
           <material>
-            <mattext texttype="text/html">${escapedStem}</mattext>
+            <mattext texttype="text/html">${stemContent}</mattext>
           </material>
           <response_str ident="RESPONSE" rcardinality="Single">
             <render_fib>
@@ -130,7 +131,7 @@ export function createTextEntryBuilder12(): QuestionBuilder {
  * Generate QTI 1.2 XML for a single text entry question
  * Throws error if generation fails
  */
-export function generateTextEntryXml12(question: Question): string {
+export async function generateTextEntryXml12(question: Question): Promise<string> {
   const builder = createTextEntryBuilder12();
   return builder.generate(question);
 }
@@ -139,11 +140,11 @@ export function generateTextEntryXml12(question: Question): string {
  * Generate and validate QTI 1.2 XML for text entry question
  * Returns error if validation fails
  */
-export function generateAndValidateTextEntry12(
+export async function generateAndValidateTextEntry12(
   question: Question
-): { xml: string } | { error: GenerationError } {
+): Promise<{ xml: string } | { error: GenerationError }> {
   try {
-    const xml = generateTextEntryXml12(question);
+    const xml = await generateTextEntryXml12(question);
     const builder = createTextEntryBuilder12();
 
     if (!builder.validate(xml)) {
