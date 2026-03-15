@@ -7,6 +7,7 @@ import { Question, QuestionBuilder, GenerationError } from '../../types';
 import { escapeXml, isValidIdentifier } from '../../xmlUtils';
 import { validateXml } from '../../xmlValidator';
 import { convertTextWithMath, stripMath } from '../../../app/utils/mathmlConverter';
+import { IMG_SEPARATOR } from '../../../app/utils/mediaUtils';
 
 class TextEntryBuilder implements QuestionBuilder {
   /**
@@ -43,8 +44,27 @@ class TextEntryBuilder implements QuestionBuilder {
   private async buildXml(question: Question): Promise<string> {
     const escapedId = escapeXml(question.identifier);
     const escapedTitle = escapeXml(stripMath(question.stem).substring(0, 100));
-    const stemContent = await convertTextWithMath(question.stem);
-    const escapedAnswer = escapeXml(question.correct_answer);
+    
+    // Process stem content handling image separators to avoid nested <p>
+    const stemParts = question.stem.split(IMG_SEPARATOR);
+    const stemContentBlocks = await Promise.all(stemParts.map(async part => {
+      const trimmed = part.trim();
+      if (!trimmed) return '';
+      if (trimmed.startsWith('<img') && trimmed.endsWith('/>')) {
+        // It's a bare image tag, wrap in <p>
+        return `<p>${trimmed}</p>`;
+      }
+      // It's text/math content, convert and wrap in <p>
+      const converted = await convertTextWithMath(trimmed);
+      return `<p>${converted}</p>`;
+    }));
+    const stemContent = stemContentBlocks.filter(Boolean).join('\n    ');
+
+    const rawAnswer = question.correct_answer.trim();
+    const escapedAnswer = escapeXml(rawAnswer);
+    const isNumeric = rawAnswer !== '' && !isNaN(Number(rawAnswer));
+    const rpBaseType = isNumeric ? 'float' : 'string';
+    const rpOperator = isNumeric ? 'equal' : 'match';
 
     // Calculate expected length based on answer length
     const answerLength = question.correct_answer.length;
@@ -60,11 +80,11 @@ class TextEntryBuilder implements QuestionBuilder {
   adaptive="false"
   timeDependent="false">
 
-  <responseDeclaration identifier="RESPONSE" cardinality="single" baseType="string">
+  ${escapedAnswer ? `<responseDeclaration identifier="RESPONSE" cardinality="single" baseType="string">
     <correctResponse>
       <value>${escapedAnswer}</value>
     </correctResponse>
-  </responseDeclaration>
+  </responseDeclaration>` : `<responseDeclaration identifier="RESPONSE" cardinality="single" baseType="string"/>`}
 
   <outcomeDeclaration identifier="SCORE" cardinality="single" baseType="float">
     <defaultValue>
@@ -73,13 +93,26 @@ class TextEntryBuilder implements QuestionBuilder {
   </outcomeDeclaration>
 
   <itemBody>
-    <div>
-      <p>${stemContent}</p>
-      <textEntryInteraction responseIdentifier="RESPONSE" expectedLength="${expectedLength}"/>
-    </div>
+    ${stemContent}
+    <textEntryInteraction responseIdentifier="RESPONSE" expectedLength="${expectedLength}">
+      <prompt>Enter your answer:</prompt>
+    </textEntryInteraction>
   </itemBody>
-
-  <responseProcessing template="http://www.imsglobal.org/question/qti_v2p1/rptemplates/match_correct"/>
+${escapedAnswer ? `
+  <responseProcessing>
+    <responseCondition>
+      <responseIf>
+        <${rpOperator}>
+          <variable identifier="RESPONSE"/>
+          <baseValue baseType="${rpBaseType}">${escapedAnswer}</baseValue>
+        </${rpOperator}>
+        <setOutcomeValue identifier="SCORE">
+          <baseValue baseType="float">1</baseValue>
+        </setOutcomeValue>
+      </responseIf>
+    </responseCondition>
+  </responseProcessing>` : `
+  <responseProcessing/>`}
 
 </assessmentItem>`;
 
@@ -122,11 +155,40 @@ export async function generateAndValidateTextEntry(
     const xml = await generateTextEntryXml(question);
     const builder = createTextEntryBuilder();
 
+    // Custom QTI 2.1 validation logic: check structural rules 1, 2, 5
+    if (xml.includes('<p><p>') || xml.includes('</p></p>')) {
+      return {
+        error: { code: 'XML_VALIDATION_FAILED', message: 'Generated XML contains nested <p> tags' }
+      };
+    }
+    
+    if (xml.includes('<textEntryInteraction') && !xml.includes('<prompt>')) {
+      return {
+        error: { code: 'XML_VALIDATION_FAILED', message: 'Missing prompt in textEntryInteraction' }
+      };
+    }
+    
+    // Check missing response processing or outcome
+    if (!xml.includes('<responseProcessing') || !xml.includes('<outcomeDeclaration')) {
+       return {
+         error: { code: 'XML_VALIDATION_FAILED', message: 'Missing responseProcessing or outcomeDeclaration' }
+       };
+    }
+    
+    // Enforce <responseDeclaration> before <itemBody>
+    const rdIndex = xml.indexOf('<responseDeclaration');
+    const ibIndex = xml.indexOf('<itemBody');
+    if (rdIndex > -1 && ibIndex > -1 && rdIndex > ibIndex) {
+      return {
+         error: { code: 'XML_VALIDATION_FAILED', message: 'responseDeclaration appears after itemBody' }
+       };
+    }
+
     if (!builder.validate(xml)) {
       return {
         error: {
           code: 'XML_VALIDATION_FAILED',
-          message: 'Generated XML failed validation',
+          message: 'Generated XML failed base validation',
         },
       };
     }

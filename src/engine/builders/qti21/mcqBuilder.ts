@@ -7,6 +7,7 @@ import { Question, QuestionBuilder, GenerationError } from '../../types';
 import { escapeXml, isValidIdentifier } from '../../xmlUtils';
 import { validateXml } from '../../xmlValidator';
 import { convertTextWithMath, stripMath } from '../../../app/utils/mathmlConverter';
+import { IMG_SEPARATOR } from '../../../app/utils/mediaUtils';
 
 class MCQBuilder implements QuestionBuilder {
   /**
@@ -83,7 +84,22 @@ class MCQBuilder implements QuestionBuilder {
   private async buildXml(question: Question): Promise<string> {
     const escapedId = escapeXml(question.identifier);
     const escapedTitle = escapeXml(stripMath(question.stem).substring(0, 100));
-    const stemContent = await convertTextWithMath(question.stem);
+    
+    // Process stem content handling image separators to avoid nested <p>
+    const stemParts = question.stem.split(IMG_SEPARATOR);
+    const stemContentBlocks = await Promise.all(stemParts.map(async part => {
+      const trimmed = part.trim();
+      if (!trimmed) return '';
+      if (trimmed.startsWith('<img') && trimmed.endsWith('/>')) {
+        // It's a bare image tag, wrap in <p>
+        return `<p>${trimmed}</p>`;
+      }
+      // It's text/math content, convert and wrap in <p>
+      const converted = await convertTextWithMath(trimmed);
+      return `<p>${converted}</p>`;
+    }));
+    const stemContent = stemContentBlocks.filter(Boolean).join('\n      ');
+
     const correctAnswer = question.correct_answer.trim().toUpperCase();
 
     // Build simpleChoice elements
@@ -101,7 +117,9 @@ class MCQBuilder implements QuestionBuilder {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <assessmentItem
   xmlns="http://www.imsglobal.org/xsd/imsqti_v2p1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xmlns:m="http://www.w3.org/1998/Math/MathML"
+  xsi:schemaLocation="http://www.imsglobal.org/xsd/imsqti_v2p1 http://www.imsglobal.org/xsd/qti/qtiv2p1/imsqti_v2p1.xsd"
   identifier="${escapedId}"
   title="${escapedTitle}"
   adaptive="false"
@@ -113,12 +131,35 @@ class MCQBuilder implements QuestionBuilder {
     </correctResponse>
   </responseDeclaration>
 
+  <outcomeDeclaration identifier="SCORE" cardinality="single" baseType="float">
+    <defaultValue>
+      <value>0</value>
+    </defaultValue>
+  </outcomeDeclaration>
+
   <itemBody>
     <choiceInteraction responseIdentifier="RESPONSE" shuffle="true" maxChoices="1">
-      <prompt>${stemContent}</prompt>
+      <prompt>
+      ${stemContent}
+      </prompt>
 ${simpleChoices}
     </choiceInteraction>
   </itemBody>
+${correctAnswer ? `
+  <responseProcessing>
+    <responseCondition>
+      <responseIf>
+        <match>
+          <variable identifier="RESPONSE"/>
+          <baseValue baseType="identifier">${correctAnswer}</baseValue>
+        </match>
+        <setOutcomeValue identifier="SCORE">
+          <baseValue baseType="float">1</baseValue>
+        </setOutcomeValue>
+      </responseIf>
+    </responseCondition>
+  </responseProcessing>` : `
+  <responseProcessing/>`}
 
 </assessmentItem>`;
 
@@ -161,11 +202,34 @@ export async function generateAndValidateMCQ(
     const xml = await generateMCQXml(question);
     const builder = createMCQBuilder();
 
+    // Custom QTI 2.1 validation logic: check structural rules 1, 2, 5
+    if (xml.includes('<p><p>') || xml.includes('</p></p>')) {
+      return {
+        error: { code: 'XML_VALIDATION_FAILED', message: 'Generated XML contains nested <p> tags' }
+      };
+    }
+    
+    // Check missing response processing or outcome
+    if (!xml.includes('<responseProcessing') || !xml.includes('<outcomeDeclaration')) {
+       return {
+         error: { code: 'XML_VALIDATION_FAILED', message: 'Missing responseProcessing or outcomeDeclaration' }
+       };
+    }
+    
+    // Enforce <responseDeclaration> before <itemBody>
+    const rdIndex = xml.indexOf('<responseDeclaration');
+    const ibIndex = xml.indexOf('<itemBody');
+    if (rdIndex > -1 && ibIndex > -1 && rdIndex > ibIndex) {
+      return {
+         error: { code: 'XML_VALIDATION_FAILED', message: 'responseDeclaration appears after itemBody' }
+       };
+    }
+
     if (!builder.validate(xml)) {
       return {
         error: {
           code: 'XML_VALIDATION_FAILED',
-          message: 'Generated XML failed validation',
+          message: 'Generated XML failed base validation',
         },
       };
     }

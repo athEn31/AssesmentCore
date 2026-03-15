@@ -31,6 +31,25 @@ export function escapeXmlForMath(text: string): string {
 }
 
 /**
+ * Escape text while preserving a tiny allowlist of inline tags used by export.
+ * This keeps injected diagram markup like <img .../> and <br/> in question stems.
+ */
+function escapeXmlPreserveInlineTags(text: string): string {
+  if (!text) return '';
+
+  const preserved: string[] = [];
+  const tokenized = String(text).replace(/<\s*(img\b[^>]*|br\s*\/?\s*)>/gi, (match) => {
+    const token = `__QTI_TAG_${preserved.length}__`;
+    preserved.push(match);
+    return token;
+  });
+
+  const escaped = escapeXmlForMath(tokenized);
+
+  return escaped.replace(/__QTI_TAG_(\d+)__/g, (_, idx) => preserved[Number(idx)] || '');
+}
+
+/**
  * Strictly sanitizes generated MathML for QTI validity.
  * - Removes invisible operators.
  * - Strips all namespace prefixes (e.g., m:math -> math).
@@ -136,7 +155,7 @@ export function convertTextWithMath(text: string): string {
   while ((match = regex.exec(text)) !== null) {
     // 1. Add XML-escaped text before the match
     if (match.index > lastIndex) {
-      result += escapeXmlForMath(text.substring(lastIndex, match.index));
+      result += escapeXmlPreserveInlineTags(text.substring(lastIndex, match.index));
     }
 
     // 2. Process the matched Math block
@@ -199,7 +218,7 @@ export function convertTextWithMath(text: string): string {
 
   // 3. Add trailing text
   if (lastIndex < text.length) {
-    result += escapeXmlForMath(text.substring(lastIndex));
+    result += escapeXmlPreserveInlineTags(text.substring(lastIndex));
   }
 
   return result;

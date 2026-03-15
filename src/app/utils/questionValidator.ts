@@ -447,19 +447,22 @@ export function validateAllQuestions(
   rows: QuestionData[],
   columnMapping: any
 ): ValidationResult[] {
+  if (!rows || rows.length === 0) return [];
+  
   // First, detect duplicates across all questions
   const duplicates = detectDuplicates(rows, columnMapping);
 
   // Validate each question and add duplicate warnings
   return rows.map((row, index) => {
+    if (!row) return null; // Safety check
     const result = validateQuestionRow(row, index + 1, columnMapping);
     
     // Add duplicate warning if this question is a duplicate
-    if (duplicates.has(row.id)) {
+    if (row.id && duplicates.has(row.id)) {
       const duplicateIds = duplicates.get(row.id)!;
       const duplicateRowNumbers = duplicateIds
         .map(id => {
-          const idx = rows.findIndex(r => r.id === id);
+          const idx = rows.findIndex(r => r && r.id === id);
           return idx !== -1 ? idx + 1 : null;
         })
         .filter(n => n !== null)
@@ -484,7 +487,7 @@ export function validateAllQuestions(
     }
 
     return result;
-  });
+  }).filter(r => r !== null) as ValidationResult[];
 }
 
 /**
@@ -533,8 +536,11 @@ function detectDuplicates(
   const fingerprintMap = new Map<string, string[]>();
   const duplicateMap = new Map<string, string[]>();
 
+  if (!rows) return duplicateMap;
+
   // Build fingerprint map
   rows.forEach(row => {
+    if (!row || !row.id) return;
     const fingerprint = getQuestionFingerprint(row, columnMapping);
     if (!fingerprint) return; // Skip if no question text
 
@@ -543,6 +549,7 @@ function detectDuplicates(
     }
     fingerprintMap.get(fingerprint)!.push(row.id);
   });
+
 
   // Find duplicates (fingerprints with more than 1 question)
   fingerprintMap.forEach((rowIds, fingerprint) => {

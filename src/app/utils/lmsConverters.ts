@@ -266,9 +266,93 @@ export function convertToCanvas(
   columnMapping: any,
   validationResults: Map<string, any>
 ): string {
-  // TODO: Implement Canvas conversion
-  console.warn("Canvas conversion not yet implemented");
-  return "";
+  const validQuestions = editedRows.filter(
+    (row) => validationResults.get(row.id)?.status !== "rejected"
+  );
+
+  const assessmentId = `assessment_${Date.now()}`;
+
+  let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+  xml += '<questestinterop>\n';
+  xml += `  <assessment ident="${assessmentId}" title="Canvas Question Export">\n`;
+  xml += '    <section ident="root_section">\n';
+
+  validQuestions.forEach((question, index) => {
+    const itemId = `item_${index + 1}`;
+    const questionText = col(question, columnMapping.questionCol);
+    const correctAnswer = col(question, columnMapping.answerCol);
+    const explanation = col(question, columnMapping.solutionCol);
+    const points = col(question, columnMapping.pointsCol) || "1";
+    const detectedType = detectQuestionType(question, columnMapping);
+
+    xml += `      <item ident="${escapeXML(itemId)}" title="${escapeXML(
+      questionText.substring(0, 80) || `Question ${index + 1}`
+    )}">\n`;
+    xml += '        <itemmetadata>\n';
+    xml += '          <qtimetadata>\n';
+    xml += `            <qtimetadatafield><fieldlabel>points_possible</fieldlabel><fieldentry>${escapeXML(points)}</fieldentry></qtimetadatafield>\n`;
+    xml += '          </qtimetadata>\n';
+    xml += '        </itemmetadata>\n';
+    xml += '        <presentation>\n';
+    xml += `          <material><mattext texttype="text/html"><![CDATA[${questionText}]]></mattext></material>\n`;
+
+    if (detectedType === "MCQ" || detectedType === "MSQ") {
+      const optionCols: string[] = columnMapping.optionCols || [];
+      const options = optionCols.map((c: string) => col(question, c)).filter(Boolean);
+      const answerIndex = getAnswerIndex(correctAnswer, options);
+
+      xml += '          <response_lid ident="response1" rcardinality="Single">\n';
+      xml += '            <render_choice>\n';
+      options.forEach((optText, optIdx) => {
+        const optIdent = `opt_${String.fromCharCode(65 + optIdx)}`;
+        xml += `              <response_label ident="${optIdent}">\n`;
+        xml += `                <material><mattext texttype="text/plain"><![CDATA[${optText}]]></mattext></material>\n`;
+        xml += '              </response_label>\n';
+      });
+      xml += '            </render_choice>\n';
+      xml += '          </response_lid>\n';
+
+      const correctOptIdent = `opt_${String.fromCharCode(65 + answerIndex)}`;
+      xml += '        </presentation>\n';
+      xml += '        <resprocessing>\n';
+      xml += '          <outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes>\n';
+      xml += '          <respcondition continue="No">\n';
+      xml += '            <conditionvar>\n';
+      xml += `              <varequal respident="response1">${correctOptIdent}</varequal>\n`;
+      xml += '            </conditionvar>\n';
+      xml += '            <setvar action="Set" varname="SCORE">100</setvar>\n';
+      xml += '          </respcondition>\n';
+      xml += '        </resprocessing>\n';
+    } else {
+      xml += '          <response_str ident="response1" rcardinality="Single">\n';
+      xml += '            <render_fib fibtype="String" prompt="Box" />\n';
+      xml += '          </response_str>\n';
+      xml += '        </presentation>\n';
+      xml += '        <resprocessing>\n';
+      xml += '          <outcomes><decvar maxvalue="100" minvalue="0" varname="SCORE" vartype="Decimal"/></outcomes>\n';
+      xml += '          <respcondition continue="No">\n';
+      xml += '            <conditionvar>\n';
+      xml += `              <varequal respident="response1">${escapeXML(correctAnswer)}</varequal>\n`;
+      xml += '            </conditionvar>\n';
+      xml += '            <setvar action="Set" varname="SCORE">100</setvar>\n';
+      xml += '          </respcondition>\n';
+      xml += '        </resprocessing>\n';
+    }
+
+    if (explanation) {
+      xml += '        <itemfeedback ident="general_fb">\n';
+      xml += `          <material><mattext texttype="text/html"><![CDATA[${explanation}]]></mattext></material>\n`;
+      xml += '        </itemfeedback>\n';
+    }
+
+    xml += '      </item>\n';
+  });
+
+  xml += '    </section>\n';
+  xml += '  </assessment>\n';
+  xml += '</questestinterop>\n';
+
+  return xml;
 }
 
 /**

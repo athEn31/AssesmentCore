@@ -1,5 +1,5 @@
 import { createQTIParaWithMath, createQTIChoiceWithMath, convertTextWithMath, stripMath } from './mathmlConverter';
-
+import { IMG_SEPARATOR } from './mediaUtils';
 export interface QTIQuestion {
   id: string;
   type: string;
@@ -24,6 +24,41 @@ export interface QTIOutput {
   json?: any;
 }
 
+function normalizeQuestionType(rawType: string): string {
+  const normalized = String(rawType || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[\s_-]+/g, '');
+
+  if (['mcq', 'singlechoice', 'singleanswer', 'multiplechoice', 'choice'].includes(normalized)) {
+    return 'mcq';
+  }
+
+  if (['truefalse', 'boolean', 'tf'].includes(normalized)) {
+    return 'truefalse';
+  }
+
+  if (
+    [
+      'shortanswer',
+      'short',
+      'textentry',
+      'text',
+      'numeric',
+      'numerical',
+      'number',
+      'fillintheblank',
+      'fib',
+      'essay',
+      'descriptive',
+    ].includes(normalized)
+  ) {
+    return 'shortanswer';
+  }
+
+  return String(rawType || '').toLowerCase().trim();
+}
+
 /**
  * Convert parsed question row to QTI question object
  */
@@ -32,6 +67,8 @@ export function convertToQTIQuestion(
   questionType: string,
   columnMapping: any
 ): QTIQuestion {
+  const normalizedType = normalizeQuestionType(questionType);
+
   // Determine title: 1. Use title col if exists, 2. Fallback to stripped question text
   let title = '';
   if (columnMapping.titleCol && row[columnMapping.titleCol]) {
@@ -43,7 +80,7 @@ export function convertToQTIQuestion(
 
   const question: QTIQuestion = {
     id: row.id || `q_${Date.now()}`,
-    type: questionType,
+    type: normalizedType,
     title,
     questionText: row[columnMapping.questionCol] || '',
     metadata: {},
@@ -63,7 +100,7 @@ export function convertToQTIQuestion(
   }
 
   // Process based on type
-  switch (questionType) {
+  switch (normalizedType) {
     case 'mcq':
       processMCQQuestion(question, row, columnMapping);
       break;
@@ -72,6 +109,11 @@ export function convertToQTIQuestion(
       break;
     case 'shortanswer':
       processShortAnswerQuestion(question, row, columnMapping);
+      break;
+    default:
+      if (columnMapping.answerCol && row[columnMapping.answerCol]) {
+        question.correctAnswer = row[columnMapping.answerCol].toString();
+      }
       break;
   }
 
@@ -171,22 +213,18 @@ export async function generateQTI21XML(question: QTIQuestion): Promise<string> {
       <value>${question.correctAnswer}</value>
     </correctResponse>
   </responseDeclaration>`;
-  } else if (question.type === 'shortanswer') {
-    xml += `
-  <responseDeclaration identifier="RESPONSE" cardinality="single" baseType="string">
-    <correctResponse>
-      <value>${escapeXml(question.correctAnswer || '')}</value>
-    </correctResponse>
-  </responseDeclaration>`;
   } else {
-    // Fallback: if type is not recognized but we have a correct answer, treat as text entry
-    if (question.correctAnswer) {
+    const rawAnswer = (question.correctAnswer || '').trim();
+    if (rawAnswer) {
       xml += `
   <responseDeclaration identifier="RESPONSE" cardinality="single" baseType="string">
     <correctResponse>
-      <value>${escapeXml(question.correctAnswer)}</value>
+      <value>${escapeXml(rawAnswer)}</value>
     </correctResponse>
   </responseDeclaration>`;
+    } else {
+      xml += `
+  <responseDeclaration identifier="RESPONSE" cardinality="single" baseType="string" />`;
     }
   }
 
@@ -198,15 +236,35 @@ export async function generateQTI21XML(question: QTIQuestion): Promise<string> {
     </defaultValue>
   </outcomeDeclaration>`;
 
+  // Outcome for feedback (only if explanation is present)
+  if (question.explanation) {
+    xml += `
+  <outcomeDeclaration identifier="ANSWER_FEEDBACK" cardinality="single" baseType="identifier">
+    <defaultValue>
+      <value>INCORRECT</value>
+    </defaultValue>
+  </outcomeDeclaration>`;
+  }
+
   // Item body
   xml += `
-  <itemBody>
-    <div>`;
+  <itemBody>`;
 
-  // Add question text — always use MathML-safe conversion
-  const questionContent = convertTextWithMath(question.questionText);
+  // Add question text — Process stem content handling image separators to avoid nested <p>
+  const stemParts = question.questionText.split(IMG_SEPARATOR);
+  const stemContentBlocks = stemParts.map(part => {
+    const trimmed = part.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('<img') && trimmed.endsWith('/>')) {
+      return `<p>${trimmed}</p>`;
+    }
+    const converted = convertTextWithMath(trimmed);
+    return `<p>${converted}</p>`;
+  });
+  
+  const questionContent = stemContentBlocks.filter(Boolean).join('\n      ');
   xml += `
-      <p>${questionContent}</p>`;
+      ${questionContent}`;
 
   if ((question.type === 'mcq' || question.type === 'truefalse') && question.options) {
     xml += `
@@ -227,10 +285,10 @@ export async function generateQTI21XML(question: QTIQuestion): Promise<string> {
       <textEntryInteraction responseIdentifier="RESPONSE" expectedLength="${expectedLength}">
         <prompt>Enter your answer:</prompt>
       </textEntryInteraction>`;
+
   }
 
-  xml += `
-    </div>`;
+
 
   // Add explanation — always use MathML-safe conversion
   if (question.explanation) {
@@ -241,11 +299,69 @@ export async function generateQTI21XML(question: QTIQuestion): Promise<string> {
     </feedbackBlock>`;
   }
 
+  // Build Custom Response Processing
+  let responseProcessingStr = '';
+  if (question.type === 'mcq' || question.type === 'truefalse') {
+    const ans = escapeXml(question.correctAnswer || '').trim();
+    if (ans) {
+      responseProcessingStr = `
+  <responseProcessing>
+    <responseCondition>
+      <responseIf>
+        <match>
+          <variable identifier="RESPONSE"/>
+          <baseValue baseType="identifier">${ans}</baseValue>
+        </match>
+        <setOutcomeValue identifier="SCORE">
+          <baseValue baseType="float">1</baseValue>
+        </setOutcomeValue>
+      </responseIf>
+    </responseCondition>
+  </responseProcessing>`;
+    } else {
+      responseProcessingStr = `\n  <responseProcessing/>`;
+    }
+  } else {
+    const rawAnswer = (question.correctAnswer || '').trim();
+    if (rawAnswer) {
+      const feedbackSuccessSet = question.explanation
+        ? `
+        <setOutcomeValue identifier="ANSWER_FEEDBACK">
+          <baseValue baseType="identifier">CORRECT</baseValue>
+        </setOutcomeValue>`
+        : '';
+      
+      responseProcessingStr = `
+  <responseProcessing>
+    <responseCondition>
+      <responseIf>
+        <stringMatch caseSensitive="false" substring="false">
+          <variable identifier="RESPONSE"/>
+          <baseValue baseType="string">${escapeXml(rawAnswer)}</baseValue>
+        </stringMatch>
+        <setOutcomeValue identifier="SCORE">
+          <baseValue baseType="float">1</baseValue>
+        </setOutcomeValue>${feedbackSuccessSet}
+      </responseIf>
+    </responseCondition>
+  </responseProcessing>`;
+    } else {
+      responseProcessingStr = `\n  <responseProcessing/>`;
+    }
+  }
+
   xml += `
   </itemBody>
-
-  <responseProcessing template="http://www.imsglobal.org/xsd/imsqti_v2p1/imsqti_v2p1_outcomes_v1p0.xml" />
+${responseProcessingStr}
 </assessmentItem>`;
+
+  // Custom validation for fallback paths
+  if (xml.includes('<p><p>') || xml.includes('</p></p>')) {
+    console.warn('QTI 2.1 Fallback Generator: Nested <p> tags detected');
+  }
+  if (xml.includes('<textEntryInteraction') && !xml.includes('<prompt>')) {
+    console.warn('QTI 2.1 Fallback Generator: Missing prompt in textEntryInteraction');
+  }
 
   return xml;
 }

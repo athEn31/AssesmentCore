@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
 import JSZip from "jszip";
 import {
@@ -74,12 +74,16 @@ import {
   extractMediaZip,
   validateMediaReferences,
   insertImageIntoQuestionText,
+  IMG_SEPARATOR,
   getImagesForPackaging,
+  normalizeMediaFilename,
+  resolveMediaFileKey,
   validateAnswerInOptions,
   validateUniqueIds,
   MediaFile,
   MediaValidationError,
 } from "../../utils/mediaUtils";
+import { uploadMediaFilesToSupabase, UploadedMediaUrl } from "../../../services/mediaUploadService";
 
 
 
@@ -94,6 +98,114 @@ interface Question {
   question: string;
   type: string;
   status: 'pending' | 'processing' | 'completed' | 'error';
+}
+
+type UploadedUrlMatchField = 'fileName' | 'serialNumber';
+
+function canonicalImageKey(input: string): string {
+  const normalized = normalizeMediaFilename(input);
+  if (!normalized) return '';
+
+  const dotIndex = normalized.lastIndexOf('.');
+  const rawName = dotIndex >= 0 ? normalized.slice(0, dotIndex) : normalized;
+  let ext = dotIndex >= 0 ? normalized.slice(dotIndex + 1) : '';
+  if (ext === 'jpeg') ext = 'jpg';
+
+  const normalizedName = rawName.replace(/[\s._-]+/g, '');
+  return ext ? `${normalizedName}.${ext}` : normalizedName;
+}
+
+function applyUploadedUrlsToRowsBySerial(
+  rows: Record<string, any>[],
+  imageCol: string,
+  uploadedUrls: UploadedMediaUrl[]
+): { rows: Record<string, any>[]; mappedCount: number } {
+  const serialToUrl = new Map<number, string>();
+  const fileNameToUrl = new Map<string, string>();
+  const canonicalFileNameToUrl = new Map<string, string>();
+
+  uploadedUrls.forEach((entry) => {
+    if (entry.serialNumber != null && !serialToUrl.has(entry.serialNumber)) {
+      serialToUrl.set(entry.serialNumber, entry.publicUrl);
+    }
+
+    const normalizedFileName = normalizeMediaFilename(entry.fileName);
+    if (normalizedFileName && !fileNameToUrl.has(normalizedFileName)) {
+      fileNameToUrl.set(normalizedFileName, entry.publicUrl);
+    }
+
+    const canonical = canonicalImageKey(entry.fileName);
+    if (canonical && !canonicalFileNameToUrl.has(canonical)) {
+      canonicalFileNameToUrl.set(canonical, entry.publicUrl);
+    }
+  });
+
+  let mappedCount = 0;
+  const mappedRows = rows.map((row, index) => {
+    const currentImageValue = row[imageCol] ? String(row[imageCol]).trim() : '';
+
+    // Keep existing URLs untouched.
+    if (currentImageValue.startsWith('http://') || currentImageValue.startsWith('https://')) {
+      return row;
+    }
+
+    // 1) Primary mapping: filename in sheet -> uploaded filename
+    const normalizedCurrent = normalizeMediaFilename(currentImageValue);
+    let url = normalizedCurrent ? fileNameToUrl.get(normalizedCurrent) : undefined;
+
+    // 1b) Canonical fallback: ignore separators/case and jpg/jpeg differences.
+    if (!url) {
+      const canonicalCurrent = canonicalImageKey(currentImageValue);
+      url = canonicalCurrent ? canonicalFileNameToUrl.get(canonicalCurrent) : undefined;
+    }
+
+    // 2) Fallback mapping: row serial number -> filename serial number
+    if (!url) {
+      const rowSerial = index + 1;
+      url = serialToUrl.get(rowSerial);
+    }
+
+    if (!url) return row;
+    mappedCount += 1;
+    return {
+      ...row,
+      [imageCol]: url,
+    };
+  });
+
+  return { rows: mappedRows, mappedCount };
+}
+
+function appendImageTagForXmlMedia(questionText: string, imageValue: string): string {
+  const raw = String(imageValue || '').trim();
+  if (!raw) return questionText;
+
+  const isUrl = raw.startsWith('http://') || raw.startsWith('https://');
+  const src = isUrl ? raw : `../media/${raw}`;
+  const alt = raw;
+
+  // Use the shared separator so builders preserve a standalone image block.
+  return `${questionText}${IMG_SEPARATOR}<img src="${src}" alt="${alt}"/>`;
+}
+
+function ensureXmlContainsImageTagForXmlMedia(xmlContent: string, imageValue: string): string {
+  const raw = String(imageValue || '').trim();
+  if (!raw) return xmlContent;
+
+  const isUrl = raw.startsWith('http://') || raw.startsWith('https://');
+  const src = isUrl ? raw : `../media/${raw}`;
+
+  // If this exact image source is already present in img/object, do nothing.
+  const escapedSrc = src.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const hasImg = new RegExp(`<img\\b[^>]*\\bsrc=["']${escapedSrc}["'][^>]*>`, 'i').test(xmlContent);
+  const hasObject = new RegExp(`<object\\b[^>]*\\bdata=["']${escapedSrc}["'][^>]*>`, 'i').test(xmlContent);
+  if (hasImg || hasObject) return xmlContent;
+
+  // If no itemBody exists, leave XML untouched.
+  if (!xmlContent.includes('</itemBody>')) return xmlContent;
+
+  const imageBlock = `\n    <p><img src="${src}" alt="${raw}"/></p>`;
+  return xmlContent.replace('</itemBody>', `${imageBlock}\n  </itemBody>`);
 }
 
 export function BatchCreator() {
@@ -117,6 +229,13 @@ export function BatchCreator() {
   const [mediaFiles, setMediaFiles] = useState<Map<string, MediaFile>>(new Map());
   const [mediaValidationErrors, setMediaValidationErrors] = useState<MediaValidationError[]>([]);
   const [isProcessingMedia, setIsProcessingMedia] = useState(false);
+  const [isUploadingMediaUrls, setIsUploadingMediaUrls] = useState(false);
+  const [uploadedMediaUrls, setUploadedMediaUrls] = useState<UploadedMediaUrl[]>([]);
+  const [mediaUploadError, setMediaUploadError] = useState<string>("");
+  const [autoMappedImageRows, setAutoMappedImageRows] = useState<number>(0);
+  const [questionMatchColumnForManualMap, setQuestionMatchColumnForManualMap] = useState<string>("");
+  const [uploadedUrlMatchField, setUploadedUrlMatchField] = useState<UploadedUrlMatchField>('fileName');
+  const [manualMapMessage, setManualMapMessage] = useState<string>("");
   const [exportMode, setExportMode] = useState<'qti-package' | 'xml-media-folder' | "">("");
   const [containsImages, setContainsImages] = useState<"yes" | "no" | "">("");
   const [containsMath, setContainsMath] = useState<"yes" | "no" | "">("");
@@ -154,6 +273,12 @@ export function BatchCreator() {
       setPendingExportContext(null);
     }
   }, [canUseAIValidation, aiValidationEnabled]);
+
+  useEffect(() => {
+    if (columnMapping?.imageCol) {
+      setQuestionMatchColumnForManualMap(columnMapping.imageCol);
+    }
+  }, [columnMapping?.imageCol]);
 
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -194,12 +319,12 @@ export function BatchCreator() {
       };
 
       for (const file of Array.from(files)) {
-        const lowerName = file.name.toLowerCase();
-        const matchedExt = imageExtensions.find(ext => lowerName.endsWith(ext));
+        const normalizedName = normalizeMediaFilename(file.name);
+        const matchedExt = imageExtensions.find(ext => normalizedName.endsWith(ext));
         if (!matchedExt) continue;
 
         const data = await file.arrayBuffer();
-        extracted.set(lowerName, {
+        extracted.set(normalizedName, {
           filename: file.name,
           data,
           type: mimeTypes[matchedExt] || 'application/octet-stream',
@@ -212,6 +337,9 @@ export function BatchCreator() {
 
       setMediaZipFile(null);
       setMediaFiles(extracted);
+      setUploadedMediaUrls([]);
+      setMediaUploadError("");
+      setAutoMappedImageRows(0);
 
       if (editedRows.length > 0 && columnMapping?.imageCol) {
         const validation = validateMediaReferences(editedRows, columnMapping.imageCol, extracted);
@@ -221,6 +349,7 @@ export function BatchCreator() {
       console.error('Error processing media folder:', error);
       alert(`Error processing media folder: ${error instanceof Error ? error.message : String(error)}`);
       setMediaFiles(new Map());
+      setUploadedMediaUrls([]);
     } finally {
       setIsProcessingMedia(false);
     }
@@ -261,6 +390,10 @@ export function BatchCreator() {
       errors.push('Please upload the template XML file');
     }
 
+    if (containsImages === 'yes' && mediaFiles.size === 0) {
+      errors.push('You selected "contains images = yes". Please upload a media ZIP or media folder.');
+    }
+
     return errors;
   };
 
@@ -299,32 +432,99 @@ export function BatchCreator() {
 
         // Parse file
         const parsed = await parseFile(file);
-        setFileData(parsed);
 
         // Detect columns
         const detected = detectQuestionColumns(parsed.columns);
         console.log('Detected column mapping:', detected);
         console.log('Available columns:', parsed.columns);
+
+        if (containsImages === 'yes' && !detected.imageCol) {
+          // If we are in XML + Media Folder mode, we might be creating the image column via upload mapping
+          if (exportMode === 'xml-media-folder') {
+            // Check if we have media files to upload which would create the column
+            if (mediaFiles.size > 0) {
+              console.log('Image column missing, but media upload is active. Utilizing "Image" as new column.');
+              detected.imageCol = "Image";
+              if (!parsed.columns.includes("Image")) {
+                parsed.columns.push("Image");
+                setFileData({...parsed});
+              }
+            } else {
+              setConfigurationValidationError(
+                `Image column not detected and no media files selected for upload. Please add a column named Image/Img/Diagram.`
+              );
+              setIsValidating(false);
+              return;
+            }
+          } else {
+            setConfigurationValidationError(
+              `Image column not detected. Please add a column named Image/Img/Diagram/Figure/Graphic. Detected columns: ${parsed.columns.join(', ')}`
+            );
+            setIsValidating(false);
+            return;
+          }
+        }
+
+        let rowsToProcess = [...parsed.rows];
+
+        if (exportMode === 'xml-media-folder' && containsImages === 'yes' && detected.imageCol) {
+          setValidationProgress(20);
+          setValidationProgressText('Uploading media to Supabase and generating URLs...');
+          setIsUploadingMediaUrls(true);
+          setMediaUploadError('');
+
+          try {
+            const uploadedUrls = await uploadMediaFilesToSupabase(mediaFiles);
+            setUploadedMediaUrls(uploadedUrls);
+
+            const { rows: rowsWithUrls, mappedCount } = applyUploadedUrlsToRowsBySerial(
+              rowsToProcess,
+              detected.imageCol,
+              uploadedUrls
+            );
+
+            rowsToProcess = rowsWithUrls;
+            setAutoMappedImageRows(mappedCount);
+          } catch (uploadError) {
+            const msg = uploadError instanceof Error ? uploadError.message : String(uploadError);
+            setMediaUploadError(msg);
+            // Non-blocking fallback: continue validation with original/local image values.
+            // This lets users proceed even if Supabase bucket/policies are not ready yet.
+            setConfigurationValidationError(
+              `Media upload failed, continuing without URL mapping: ${msg}`
+            );
+            setUploadedMediaUrls([]);
+            setAutoMappedImageRows(0);
+          } finally {
+            setIsUploadingMediaUrls(false);
+          }
+        } else {
+          setUploadedMediaUrls([]);
+          setMediaUploadError('');
+          setAutoMappedImageRows(0);
+        }
+
+        setFileData(parsed);
         setColumnMapping(detected);
-        setEditedRows([...parsed.rows]);
+        setEditedRows([...rowsToProcess]);
 
         // Use chunked validation for large datasets (> 500 rows)
-        setValidationProgressText(`Validating ${parsed.rows.length} questions...`);
+        setValidationProgressText(`Validating ${rowsToProcess.length} questions...`);
         let resultsMap: Map<string, ValidationResult>;
         
-        if (parsed.rows.length > 500) {
+        if (rowsToProcess.length > 500) {
           resultsMap = await validateAllQuestionsChunked(
-            parsed.rows as any,
+            rowsToProcess as any,
             detected,
             500, // Chunk size
             (progress, processedCount) => {
               setValidationProgress(progress);
-              setValidationProgressText(`Validated ${processedCount} of ${parsed.rows.length} questions...`);
+              setValidationProgressText(`Validated ${processedCount} of ${rowsToProcess.length} questions...`);
             }
           );
         } else {
           // For small datasets, validate all at once
-          const results = validateAllQuestions(parsed.rows as any, detected);
+          const results = validateAllQuestions(rowsToProcess as any, detected);
           resultsMap = new Map<string, ValidationResult>();
           results.forEach(result => {
             resultsMap.set(result.rowId, result);
@@ -366,6 +566,73 @@ export function BatchCreator() {
     }
   };
 
+  const applyManualUploadedUrlMapping = async () => {
+    if (!columnMapping?.imageCol) {
+      setManualMapMessage('Cannot map URLs: image column is not detected in question sheet.');
+      return;
+    }
+
+    if (!questionMatchColumnForManualMap) {
+      setManualMapMessage('Please select a question-sheet match column.');
+      return;
+    }
+
+    if (uploadedMediaUrls.length === 0) {
+      setManualMapMessage('No uploaded image URLs available to map. Upload media first.');
+      return;
+    }
+
+    const keyToUrl = new Map<string, string>();
+
+    uploadedMediaUrls.forEach((entry) => {
+      if (uploadedUrlMatchField === 'serialNumber') {
+        if (entry.serialNumber != null) {
+          keyToUrl.set(String(entry.serialNumber), entry.publicUrl);
+        }
+        return;
+      }
+
+      const canonical = canonicalImageKey(entry.fileName);
+      if (canonical && !keyToUrl.has(canonical)) {
+        keyToUrl.set(canonical, entry.publicUrl);
+      }
+    });
+
+    let mappedCount = 0;
+    const updatedRows = editedRows.map((row, index) => {
+      let matchValue = '';
+
+      if (questionMatchColumnForManualMap === '__row_serial__') {
+        matchValue = String(index + 1);
+      } else {
+        const raw = row[questionMatchColumnForManualMap];
+        matchValue = raw != null ? String(raw).trim() : '';
+      }
+
+      if (!matchValue) return row;
+
+      const key = uploadedUrlMatchField === 'serialNumber'
+        ? matchValue
+        : canonicalImageKey(matchValue);
+
+      const mappedUrl = key ? keyToUrl.get(key) : undefined;
+      if (!mappedUrl) return row;
+
+      mappedCount += 1;
+      return {
+        ...row,
+        [columnMapping.imageCol]: mappedUrl,
+      };
+    });
+
+    await handleDataChange(updatedRows);
+    setManualMapMessage(
+      mappedCount > 0
+        ? `Manual mapping complete: ${mappedCount} row(s) updated with public URLs.`
+        : 'Manual mapping complete: no rows matched the selected mapping columns.'
+    );
+  };
+
   // Handle media ZIP upload
   const handleMediaUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -379,6 +646,9 @@ export function BatchCreator() {
     try {
       const extracted = await extractMediaZip(file);
       setMediaFiles(extracted);
+      setUploadedMediaUrls([]);
+      setMediaUploadError("");
+      setAutoMappedImageRows(0);
 
       // Validate references if we have data loaded
       if (editedRows.length > 0 && columnMapping?.imageCol) {
@@ -393,12 +663,39 @@ export function BatchCreator() {
       setIsProcessingMedia(false);
       setMediaZipFile(null);
       setMediaFiles(new Map());
+      setUploadedMediaUrls([]);
     }
   };
 
   // Validate before export
   const validateBeforeExport = (): { valid: boolean; errors: string[] } => {
     const errors: string[] = [];
+
+    if (containsImages === 'yes') {
+      if (!columnMapping?.imageCol) {
+        errors.push('Contains images is set to Yes, but no image column was detected. Add Image/Img/Diagram column.');
+      }
+
+      if (mediaFiles.size === 0) {
+        errors.push('Contains images is set to Yes, but no media ZIP/folder is uploaded.');
+      }
+
+      if (columnMapping?.imageCol) {
+        const imageCol = columnMapping.imageCol;
+        const rowsWithMissingImage = editedRows
+          .map((row, idx) => ({ row, rowNumber: idx + 1 }))
+          .filter(({ row }) => {
+            const imageValue = row[imageCol];
+            return !imageValue || String(imageValue).trim() === '';
+          })
+          .slice(0, 10)
+          .map(({ rowNumber }) => rowNumber);
+
+        if (rowsWithMissingImage.length > 0) {
+          errors.push(`Contains images is Yes, but image filename is empty for row(s): ${rowsWithMissingImage.join(', ')}${editedRows.length > 10 ? ' ...' : ''}`);
+        }
+      }
+    }
 
     // Check for duplicate IDs
     const idValidation = validateUniqueIds(editedRows);
@@ -425,13 +722,17 @@ export function BatchCreator() {
         });
       }
     } else if (columnMapping?.imageCol) {
-      // Check if any row has an image reference but no media ZIP uploaded
-      const hasImageRefs = editedRows.some(row => {
+      // Check if any row has a LOCAL image reference but no media ZIP uploaded
+      // (Ignore rows that already have full URLs)
+      const hasLocalImageRefs = editedRows.some(row => {
         const imageValue = row[columnMapping.imageCol];
-        return imageValue && String(imageValue).trim() !== '';
+        const valStr = imageValue ? String(imageValue).trim() : '';
+        // It's a local ref if it's not empty and doesn't look like a URL
+        return valStr !== '' && !valStr.startsWith('http://') && !valStr.startsWith('https://');
       });
-      if (hasImageRefs && mediaFiles.size === 0) {
-        errors.push('Questions reference images but no media ZIP file was uploaded');
+      
+      if (hasLocalImageRefs && mediaFiles.size === 0) {
+        errors.push('Questions reference local images but no media ZIP file was uploaded');
       }
     }
 
@@ -669,16 +970,25 @@ export function BatchCreator() {
         // Get image filename for this question
         const imageFilename = columnMapping?.imageCol ? row[columnMapping.imageCol] : undefined;
         const imageFilenameStr = imageFilename ? String(imageFilename).trim() : '';
+        const normalizedImageKey = imageFilenameStr
+          ? (resolveMediaFileKey(mediaFiles, imageFilenameStr) || normalizeMediaFilename(imageFilenameStr))
+          : '';
+        const matchedMediaFile = normalizedImageKey ? mediaFiles.get(normalizedImageKey) : undefined;
+        const resolvedImageFilename = matchedMediaFile?.filename || imageFilenameStr;
         const itemImageFiles: string[] = [];
         
-        if (imageFilenameStr) {
-          referencedImages.add(imageFilenameStr.toLowerCase());
-          itemImageFiles.push(imageFilenameStr);
+        if (normalizedImageKey) {
+          referencedImages.add(normalizedImageKey);
+          if (matchedMediaFile?.filename) {
+            itemImageFiles.push(matchedMediaFile.filename);
+          } else if (resolvedImageFilename) {
+            itemImageFiles.push(resolvedImageFilename);
+          }
         }
 
         // Get question text with image inserted
         const originalQuestionText = (row[columnMapping.questionCol] as string) || '';
-        const questionTextWithImage = insertImageIntoQuestionText(originalQuestionText, imageFilenameStr);
+        const questionTextWithImage = insertImageIntoQuestionText(originalQuestionText, resolvedImageFilename);
 
         try {
           let xmlContent = '';
@@ -696,6 +1006,7 @@ export function BatchCreator() {
               type: 'MCQ',
               options: optionValues.map((v: any) => String(v)),
               correct_answer: (row[columnMapping.answerCol] as string) || 'A',
+              correctAnswer: (row[columnMapping.answerCol] as string) || 'A',
               validation_status: (validationResult?.status as string) === 'valid' ? 'Valid' : 'Caution',
             };
 
@@ -721,6 +1032,7 @@ export function BatchCreator() {
               type: 'ShortAnswer',
               options: [],
               correct_answer: (row[columnMapping.answerCol] as string) || '',
+              correctAnswer: (row[columnMapping.answerCol] as string) || '',
               validation_status: (validationResult?.status as string) === 'valid' ? 'Valid' : 'Caution',
             };
 
@@ -919,13 +1231,15 @@ export function BatchCreator() {
         const imageFilenameStr = imageFilename ? String(imageFilename).trim() : '';
         
         if (imageFilenameStr) {
-          referencedImages.add(imageFilenameStr.toLowerCase());
+          if (!imageFilenameStr.startsWith('http://') && !imageFilenameStr.startsWith('https://')) {
+            referencedImages.add(imageFilenameStr.toLowerCase());
+          }
         }
 
-        // For XML+Media mode, use relative path from xml/ to media/
+        // For XML+Media mode, preserve image as a dedicated stem block with URL/local path.
         const originalQuestionText = (row[columnMapping.questionCol] as string) || '';
-        const questionTextWithImage = imageFilenameStr 
-          ? `${originalQuestionText}<br/><img src="../media/${imageFilenameStr}" alt="${imageFilenameStr}" />`
+        const questionTextWithImage = imageFilenameStr
+          ? appendImageTagForXmlMedia(originalQuestionText, imageFilenameStr)
           : originalQuestionText;
 
         try {
@@ -992,6 +1306,7 @@ export function BatchCreator() {
             xmlContent = (await generateQTI(oldQti, outputFormat === 'qti-1.2' ? '1.2' : outputFormat === 'qti-3.0' ? '3.0' : '2.1', 'xml')).xml || '';
           }
 
+          xmlContent = ensureXmlContainsImageTagForXmlMedia(xmlContent, imageFilenameStr);
           xmlFolder.file(fileName, xmlContent);
           xmlFilesForValidation.push({ fileName, xmlContent });
           exportCount++;
@@ -1000,7 +1315,8 @@ export function BatchCreator() {
           const oldQti = convertToQTIQuestion(row, questionType, columnMapping);
           oldQti.id = safeItemIdentifier;
           oldQti.questionText = questionTextWithImage;
-          const xml = (await generateQTI(oldQti, outputFormat === 'qti-1.2' ? '1.2' : outputFormat === 'qti-3.0' ? '3.0' : '2.1', 'xml')).xml || '';
+          let xml = (await generateQTI(oldQti, outputFormat === 'qti-1.2' ? '1.2' : outputFormat === 'qti-3.0' ? '3.0' : '2.1', 'xml')).xml || '';
+          xml = ensureXmlContainsImageTagForXmlMedia(xml, imageFilenameStr);
           xmlFolder.file(fileName, xml);
           xmlFilesForValidation.push({ fileName, xmlContent: xml });
           exportCount++;
@@ -1390,7 +1706,7 @@ export function BatchCreator() {
       const filteredZ = new JSZip();
       
       // Determine folder structure based on exportMode
-      const isXmlMedia = exportMode === 'xml-media';
+      const isXmlMedia = exportMode === 'xml-media-folder';
       const xmlFolder = isXmlMedia ? filteredZ.folder('xml') : filteredZ;
       const mediaFolder = isXmlMedia ? filteredZ.folder('media') : filteredZ.folder('images');
 
@@ -1520,6 +1836,73 @@ export function BatchCreator() {
   };
 
   const stats = getValidationStats();
+  const imageUrlTableRows = useMemo(() => {
+    if (exportMode !== 'xml-media-folder') return [];
+    if (containsImages !== 'yes') return [];
+    if (!columnMapping?.imageCol) return [];
+
+    const imageCol = columnMapping.imageCol as string;
+    const fileNameToUrl = new Map<string, string>();
+    const serialToUrl = new Map<number, string>();
+    const canonicalFileNameToUrl = new Map<string, string>();
+
+    uploadedMediaUrls.forEach((entry) => {
+      const normalizedName = normalizeMediaFilename(entry.fileName);
+      if (normalizedName && !fileNameToUrl.has(normalizedName)) {
+        fileNameToUrl.set(normalizedName, entry.publicUrl);
+      }
+
+      const canonical = canonicalImageKey(entry.fileName);
+      if (canonical && !canonicalFileNameToUrl.has(canonical)) {
+        canonicalFileNameToUrl.set(canonical, entry.publicUrl);
+      }
+
+      if (entry.serialNumber != null && !serialToUrl.has(entry.serialNumber)) {
+        serialToUrl.set(entry.serialNumber, entry.publicUrl);
+      }
+    });
+
+    return editedRows
+      .map((row, index) => {
+        const rowSerial = index + 1;
+        const imageValue = row[imageCol] ? String(row[imageCol]).trim() : '';
+        const isExistingUrl = imageValue.startsWith('http://') || imageValue.startsWith('https://');
+
+        let mappedUrl = '';
+        if (isExistingUrl) {
+          mappedUrl = imageValue;
+        } else if (imageValue) {
+          const normalized = normalizeMediaFilename(imageValue);
+          mappedUrl = normalized ? (fileNameToUrl.get(normalized) || '') : '';
+
+          if (!mappedUrl) {
+            const canonical = canonicalImageKey(imageValue);
+            mappedUrl = canonical ? (canonicalFileNameToUrl.get(canonical) || '') : '';
+          }
+
+          if (!mappedUrl) {
+            mappedUrl = serialToUrl.get(rowSerial) || '';
+          }
+        }
+
+        const status: 'mapped' | 'existing' | 'missing' | 'empty' =
+          mappedUrl && isExistingUrl
+            ? 'existing'
+            : mappedUrl
+              ? 'mapped'
+              : imageValue
+                ? 'missing'
+                : 'empty';
+
+        return {
+          rowSerial,
+          imageValue,
+          mappedUrl,
+          status,
+        };
+      })
+      .filter((entry) => entry.imageValue || entry.mappedUrl);
+  }, [exportMode, containsImages, columnMapping, editedRows, uploadedMediaUrls]);
 
   // Loading state
   if (loading) {
@@ -1683,18 +2066,6 @@ export function BatchCreator() {
               )}
             </p>
           </div>
-          <div className="flex gap-2">
-            {fileData && (
-              <Button
-                variant="outline"
-                onClick={() => setShowValidationReport(!showValidationReport)}
-                className="border border-[#334155] text-[#1F2937] hover:bg-[#F1F5F9] rounded-md"
-              >
-                <Eye className="w-4 h-4 mr-2" />
-                {showValidationReport ? 'Hide' : 'Show'} Report
-              </Button>
-            )}
-          </div>
         </div>
       </div>
 
@@ -1799,6 +2170,13 @@ export function BatchCreator() {
                       </div>
                     )}
 
+                    {isUploadingMediaUrls && (
+                      <div className="flex items-center gap-2 mt-2 text-sm text-[#475569]">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Uploading media to Supabase and generating URLs...
+                      </div>
+                    )}
+
                     {(mediaZipFile || mediaFiles.size > 0) && !isProcessingMedia && (
                       <div className="bg-[#F0FDF4] border border-[#16A34A] rounded-lg p-3 mt-2">
                         <div className="flex items-center gap-2">
@@ -1811,6 +2189,16 @@ export function BatchCreator() {
                           {mediaFiles.size} image(s) loaded
                         </p>
                       </div>
+                    )}
+
+                    {mediaUploadError && (
+                      <Alert className="bg-[#FEF2F2] border-red-500">
+                        <AlertCircle className="h-4 w-4 text-red-500" />
+                        <AlertTitle className="text-red-900">Media Upload Error</AlertTitle>
+                        <AlertDescription className="text-red-700 text-sm">
+                          {mediaUploadError}
+                        </AlertDescription>
+                      </Alert>
                     )}
                   </div>
                 )}
@@ -2066,6 +2454,40 @@ export function BatchCreator() {
         ) : (
           // Results Section
           <div className="space-y-6">
+            {exportMode === 'xml-media-folder' && containsImages === 'yes' && (
+              <>
+                {mediaUploadError && (
+                  <Alert className="bg-[#FEF2F2] border-red-500">
+                    <AlertCircle className="h-4 w-4 text-red-500" />
+                    <AlertTitle className="text-red-900">Image URL Mapping Not Applied</AlertTitle>
+                    <AlertDescription className="text-red-700 text-sm">
+                      {mediaUploadError}
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {!mediaUploadError && uploadedMediaUrls.length === 0 && mediaFiles.size > 0 && (
+                  <Alert className="bg-[#FFFBEB] border-[#F59E0B]">
+                    <AlertTriangle className="h-4 w-4 text-[#B45309]" />
+                    <AlertTitle className="text-[#78350F]">No Image URLs Generated</AlertTitle>
+                    <AlertDescription className="text-[#92400E] text-sm">
+                      Images are loaded, but no public URLs were generated during validation. Your rows are currently using local image values.
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {uploadedMediaUrls.length > 0 && (
+                  <Alert className="bg-[#F0FDF4] border-[#16A34A]">
+                    <CheckCircle2 className="h-4 w-4 text-[#16A34A]" />
+                    <AlertTitle className="text-[#166534]">Image URL Mapping Applied</AlertTitle>
+                    <AlertDescription className="text-[#166534] text-sm">
+                      {uploadedMediaUrls.length} URL(s) generated and {autoMappedImageRows} row(s) mapped in the image column.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </>
+            )}
+
             {/* Stats Cards */}
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <Card>
@@ -2192,6 +2614,150 @@ export function BatchCreator() {
                 )}
               </div>
             </div>
+
+            {exportMode === 'xml-media-folder' && containsImages === 'yes' && columnMapping?.imageCol && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Image className="w-5 h-5" />
+                    Image and URL Mapping
+                  </CardTitle>
+                  <CardDescription>
+                    Validation-stage table of image values and corresponding public URLs.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="border border-[#E2E8F0] rounded-lg p-3 bg-[#F8FAFC] space-y-3">
+                    <p className="text-sm font-medium text-[#334155]">
+                      Manual Mapping (Uploaded Image URL Table {'->'} Question Sheet)
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs text-[#64748B] mb-1">Question Sheet Match Column</label>
+                        <Select
+                          value={questionMatchColumnForManualMap}
+                          onValueChange={(v) => setQuestionMatchColumnForManualMap(v)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select question match column" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__row_serial__">Row Serial (#)</SelectItem>
+                            {(fileData?.columns || []).map((col) => (
+                              <SelectItem key={`manual-map-col-${col}`} value={col}>{col}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs text-[#64748B] mb-1">Uploaded URL Table Match Column</label>
+                        <Select
+                          value={uploadedUrlMatchField}
+                          onValueChange={(v) => setUploadedUrlMatchField(v as UploadedUrlMatchField)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select uploaded table column" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="fileName">Image File Name</SelectItem>
+                            <SelectItem value="serialNumber">Serial Number</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="flex items-end">
+                        <Button
+                          type="button"
+                          className="w-full bg-[#0F6CBD] hover:bg-[#0B5A9A] text-white"
+                          onClick={applyManualUploadedUrlMapping}
+                          disabled={uploadedMediaUrls.length === 0 || !questionMatchColumnForManualMap}
+                        >
+                          Apply Manual Mapping
+                        </Button>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-[#64748B]">
+                      Target column in question sheet: <span className="font-semibold">{columnMapping.imageCol}</span>
+                    </p>
+
+                    {manualMapMessage && (
+                      <Alert className="bg-[#FFFFFF] border-[#CBD5E1]">
+                        <AlertCircle className="h-4 w-4 text-[#0F6CBD]" />
+                        <AlertDescription className="text-sm text-[#334155]">
+                          {manualMapMessage}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </div>
+
+                  <div className="text-sm text-[#334155]">
+                    {imageUrlTableRows.filter(r => r.mappedUrl).length} row(s) have URL values and {imageUrlTableRows.filter(r => r.status === 'missing').length} row(s) are pending mapping.
+                  </div>
+                  <div className="overflow-x-auto border border-[#E2E8F0] rounded-lg">
+                    <table className="w-full text-sm">
+                      <thead className="bg-[#F8FAFC] text-[#334155]">
+                        <tr>
+                          <th className="text-left px-3 py-2 border-b border-[#E2E8F0]">Row Serial</th>
+                          <th className="text-left px-3 py-2 border-b border-[#E2E8F0]">Image</th>
+                          <th className="text-left px-3 py-2 border-b border-[#E2E8F0]">Image URL</th>
+                          <th className="text-left px-3 py-2 border-b border-[#E2E8F0]">Status</th>
+                          <th className="text-left px-3 py-2 border-b border-[#E2E8F0]">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {imageUrlTableRows.map((entry, idx) => (
+                          <tr key={`${entry.rowSerial}-${idx}`} className="odd:bg-white even:bg-[#FCFDFF]">
+                            <td className="px-3 py-2 border-b border-[#F1F5F9]">
+                              {entry.rowSerial}
+                            </td>
+                            <td className="px-3 py-2 border-b border-[#F1F5F9]">{entry.imageValue || '-'}</td>
+                            <td className="px-3 py-2 border-b border-[#F1F5F9] break-all text-[#0F6CBD]">
+                              {entry.mappedUrl || '-'}
+                            </td>
+                            <td className="px-3 py-2 border-b border-[#F1F5F9]">
+                              {entry.status === 'existing' ? (
+                                <Badge className="bg-[#E0F2FE] text-[#0C4A6E]">Existing URL</Badge>
+                              ) : entry.status === 'mapped' ? (
+                                <Badge className="bg-[#DCFCE7] text-[#166534]">Mapped</Badge>
+                              ) : entry.status === 'missing' ? (
+                                <Badge className="bg-[#FEF3C7] text-[#92400E]">Not Mapped</Badge>
+                              ) : (
+                                <Badge variant="outline">Empty</Badge>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 border-b border-[#F1F5F9]">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={!entry.mappedUrl}
+                                onClick={() => {
+                                  if (entry.mappedUrl && navigator?.clipboard?.writeText) {
+                                    navigator.clipboard.writeText(entry.mappedUrl);
+                                  }
+                                }}
+                              >
+                                Copy URL
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                        {imageUrlTableRows.length === 0 && (
+                          <tr>
+                            <td className="px-3 py-3 text-[#64748B]" colSpan={6}>
+                              No image values found in rows yet.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Validation Report - BEFORE Export Section */}
             {showValidationReport && fileData && (

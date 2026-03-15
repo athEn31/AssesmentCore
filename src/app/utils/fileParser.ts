@@ -201,8 +201,8 @@ export function detectQuestionColumns(columns: string[]): {
   const orderPatterns = ['order', 'sequence', 'arrange', 'order_items'];
   result.orderCol = columns[lowerColumns.findIndex(c => orderPatterns.some(p => c.includes(p)))];
 
-  // Detect image column (for media support)
-  const imagePatterns = ['image', 'img', 'picture', 'media', 'figure', 'graphic'];
+  // Detect image/diagram column (for media support)
+  const imagePatterns = ['image', 'img', 'picture', 'media', 'figure', 'graphic', 'diagram', 'illustration'];
   result.imageCol = columns[lowerColumns.findIndex(c => imagePatterns.some(p => c.includes(p)))];
 
   return result;

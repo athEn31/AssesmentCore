@@ -25,6 +25,95 @@ export interface MediaValidationResult {
 }
 
 /**
+ * Normalize filename from sheet/zip for reliable matching.
+ * Handles paths, quotes, non-breaking spaces, and case-insensitivity.
+ */
+function extractBaseFilename(input: string): string {
+  let value = String(input || '')
+    .normalize('NFKC')
+    .replace(/\u00A0/g, ' ')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim();
+
+  // Remove wrapping quotes often introduced by CSV/Excel exports.
+  value = value.replace(/^['"]+|['"]+$/g, '');
+
+  // Support pasted paths from Windows/Linux and keep only the basename.
+  value = value.replace(/\\/g, '/');
+  const parts = value.split('/');
+  value = parts[parts.length - 1] || '';
+
+  // Decode common URL-encoded names from exported archives (%20, etc.)
+  try {
+    value = decodeURIComponent(value);
+  } catch {
+    // Keep original if decoding fails.
+  }
+
+  // Treat '+' as a space in filenames coming from encoded contexts.
+  value = value.replace(/\+/g, ' ');
+
+  // Collapse internal whitespace noise.
+  value = value.replace(/\s+/g, ' ');
+
+  return value.trim();
+}
+
+export function normalizeMediaFilename(input: string): string {
+  return extractBaseFilename(input).toLowerCase();
+}
+
+export function sanitizeMediaFilename(input: string): string {
+  return extractBaseFilename(input);
+}
+
+function canonicalMediaKey(input: string): string {
+  const base = normalizeMediaFilename(input);
+  if (!base) return '';
+
+  const parts = base.split('.');
+  const ext = parts.length > 1 ? parts.pop() || '' : '';
+  let name = parts.join('.');
+
+  // Handle accidental double image extensions like: question.jpg.jpeg
+  // by stripping one trailing image extension token from the basename.
+  name = name.replace(/\.(png|jpe?g|gif|svg|webp|bmp)$/i, '');
+
+  const normalizedName = name.replace(/[.\s_-]+/g, '');
+  const normalizedExt = ext === 'jpeg' ? 'jpg' : ext;
+
+  return normalizedExt ? `${normalizedName}.${normalizedExt}` : normalizedName;
+}
+
+/**
+ * Resolve a sheet-provided filename against uploaded media keys.
+ * 1) Exact normalized key match
+ * 2) Canonical fallback (ignores spaces/_/- and treats jpg/jpeg as equivalent)
+ */
+export function resolveMediaFileKey(
+  mediaFiles: Map<string, MediaFile>,
+  sheetValue: string
+): string | undefined {
+  const normalized = normalizeMediaFilename(sheetValue);
+  if (!normalized) return undefined;
+
+  if (mediaFiles.has(normalized)) {
+    return normalized;
+  }
+
+  const targetCanonical = canonicalMediaKey(sheetValue);
+  if (!targetCanonical) return undefined;
+
+  for (const key of mediaFiles.keys()) {
+    if (canonicalMediaKey(key) === targetCanonical) {
+      return key;
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Extract files from a media ZIP
  */
 export async function extractMediaZip(file: File): Promise<Map<string, MediaFile>> {
@@ -41,8 +130,9 @@ export async function extractMediaZip(file: File): Promise<Map<string, MediaFile
       if (zipEntry.dir) continue;
       
       // Get the filename (handle nested folders)
-      const filename = relativePath.split('/').pop() || relativePath;
-      const lowerFilename = filename.toLowerCase();
+      const filename = sanitizeMediaFilename(relativePath);
+      const lowerFilename = normalizeMediaFilename(relativePath);
+      if (!filename || !lowerFilename) continue;
       
       // Check if it's an image file
       const isImage = imageExtensions.some(ext => lowerFilename.endsWith(ext));
@@ -105,17 +195,32 @@ export function validateMediaReferences(
     const imageValue = row[imageColName];
     if (!imageValue || String(imageValue).trim() === '') return;
     
-    const imageFilename = String(imageValue).trim();
-    const lowerFilename = imageFilename.toLowerCase();
-    referencedImages.add(lowerFilename);
+    // Skip validation for remote URLs (e.g. Supabase links)
+    if (String(imageValue).startsWith('http://') || String(imageValue).startsWith('https://')) {
+      return;
+    }
+
+    const imageFilename = sanitizeMediaFilename(String(imageValue));
+    const resolvedKey = resolveMediaFileKey(mediaFiles, String(imageValue));
+    const fallbackKey = normalizeMediaFilename(String(imageValue));
+    if (!fallbackKey) return;
+
+    referencedImages.add(resolvedKey || fallbackKey);
     
     // Check if file exists in media ZIP
-    if (!mediaFiles.has(lowerFilename)) {
+    if (!resolvedKey) {
+      const mediaSample = Array.from(mediaFiles.values())
+        .slice(0, 5)
+        .map(f => f.filename)
+        .join(', ');
+
       errors.push({
         rowId: row.id || `row_${index}`,
         rowNumber: index + 1,
         imageFilename,
-        message: `Image file "${imageFilename}" not found in media ZIP`,
+        message: mediaSample
+          ? `Image file "${imageFilename}" not found in media ZIP. Sample files detected: ${mediaSample}`
+          : `Image file "${imageFilename}" not found in media ZIP`,
       });
     }
   });
@@ -128,9 +233,28 @@ export function validateMediaReferences(
 }
 
 /**
- * Insert image HTML tag into question text
- * Returns modified question text with image embedded
+ * Separator used between question text and image tag.
+ * Builders split on this to produce separate <p> blocks.
  */
+export const IMG_SEPARATOR = '\n<!--IMG_SEP-->\n';
+
+/**
+ * Sanitize image filename for QTI compliance:
+ * - Replace spaces with underscores
+ * - Lowercase the filename
+ * - Strip double image extensions (e.g. .jpg.jpeg -> .jpeg)
+ */
+export function sanitizeImageFilenameForQTI(filename: string): string {
+  let sanitized = filename.trim();
+  // Replace spaces with underscores (Rule 8)
+  sanitized = sanitized.replace(/\s+/g, '_');
+  // Lowercase (Rule 9)
+  sanitized = sanitized.toLowerCase();
+  // Strip double image extensions like .jpg.jpeg (Rule 10)
+  sanitized = sanitized.replace(/\.(png|jpe?g|gif|svg|webp|bmp)\.(png|jpe?g|gif|svg|webp|bmp)$/i, '.$2');
+  return sanitized;
+}
+
 export function insertImageIntoQuestionText(
   questionText: string,
   imageFilename: string | undefined | null,
@@ -140,15 +264,18 @@ export function insertImageIntoQuestionText(
     return questionText;
   }
   
-  const filename = String(imageFilename).trim();
-  const imagePath = `images/${filename}`;
-  const imageTag = `<br/><img src="${imagePath}" alt="${filename}" />`;
+  const filename = sanitizeMediaFilename(String(imageFilename));
+  if (!filename) return questionText;
+  const safeFilename = sanitizeImageFilenameForQTI(filename);
+  const imagePath = `images/${safeFilename}`;
+  // Bare <img> tag — builders will wrap in <p> to avoid nested <p> (Rule 5/6)
+  const imageTag = `<img src="${imagePath}" alt="${safeFilename}" />`;
   
   if (imagePosition === 'before') {
-    return `${imageTag}<br/>${questionText}`;
+    return `${imageTag}${IMG_SEPARATOR}${questionText}`;
   }
   
-  return `${questionText}${imageTag}`;
+  return `${questionText}${IMG_SEPARATOR}${imageTag}`;
 }
 
 /**
@@ -220,7 +347,7 @@ export function getImagesForPackaging(
  * Detect "Image" or similar column in columns list
  */
 export function detectImageColumn(columns: string[]): string | undefined {
-  const imagePatterns = ['image', 'img', 'picture', 'media', 'figure', 'graphic'];
+  const imagePatterns = ['image', 'img', 'picture', 'media', 'figure', 'graphic', 'diagram', 'illustration'];
   const lowerColumns = columns.map(c => c.toLowerCase());
   
   const index = lowerColumns.findIndex(c => 
