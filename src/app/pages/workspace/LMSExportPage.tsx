@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import JSZip from "jszip";
 import {
@@ -524,9 +524,9 @@ export function LMSExportPage() {
                   {selectedPlatform === "canvas" && (
                     <Alert className="bg-[#EFF6FF] border-[#93C5FD]">
                       <CheckCircle2 className="h-4 w-4 text-[#0F6CBD]" />
-                      <AlertTitle className="text-[#0C4A6E]">Canvas Rules Applied</AlertTitle>
+                      <AlertTitle className="text-[#0C4A6E]">Canvas Format Applied</AlertTitle>
                       <AlertDescription className="text-[#0C4A6E] text-sm">
-                        Converts img tags to object tags, aligns image paths to /images, updates manifest resource entries, then lets you review and edit each XML before export.
+                        Converts QTI items to Canvas-compatible format: proper namespace handling, nested paragraph cleanup, feedbackBlock to modalFeedback conversion, and inline textEntryInteraction support.
                       </AlertDescription>
                     </Alert>
                   )}
@@ -621,44 +621,63 @@ export function LMSExportPage() {
 
                 {canvasPreview && (
                   <>
-                    <div className="text-sm text-[#334155]">
-                      Total: {canvasPreview.summary.totalXml}, Ready: {canvasPreview.summary.readyXml}, Skipped: {canvasPreview.summary.skippedXml}, Converted image tags: {canvasPreview.summary.convertedImgTags}
+                    <div className="bg-[#F0F9FF] border border-[#93C5FD] rounded-lg p-3 text-sm text-[#0C4A6E]">
+                      <p className="font-semibold mb-2">Conversion Summary:</p>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div>
+                          <p className="text-xs text-[#0884C6]">Total Items</p>
+                          <p className="text-lg font-bold">{canvasPreview.summary.totalXml}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-[#0884C6]">Ready</p>
+                          <p className="text-lg font-bold text-[#166534]">{canvasPreview.summary.readyXml}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-[#0884C6]">Skipped</p>
+                          <p className="text-lg font-bold text-[#92400E]">{canvasPreview.summary.skippedXml}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-[#0884C6]">Images Conv.</p>
+                          <p className="text-lg font-bold">{canvasPreview.summary.convertedImgTags}</p>
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="overflow-x-auto border border-[#E2E8F0] rounded-lg">
+                    <div className="overflow-x-auto border border-[#E2E8F0] rounded-lg shadow-sm">
                       <table className="w-full text-sm">
                         <thead className="bg-[#F8FAFC] text-[#334155]">
                           <tr>
-                            <th className="text-left px-3 py-2 border-b border-[#E2E8F0]">Include</th>
+                            <th className="text-left px-3 py-2 border-b border-[#E2E8F0] w-12">Include</th>
                             <th className="text-left px-3 py-2 border-b border-[#E2E8F0]">XML File</th>
-                            <th className="text-left px-3 py-2 border-b border-[#E2E8F0]">Status</th>
-                            <th className="text-left px-3 py-2 border-b border-[#E2E8F0]">Issues</th>
-                            <th className="text-left px-3 py-2 border-b border-[#E2E8F0]">Edit</th>
+                            <th className="text-left px-3 py-2 border-b border-[#E2E8F0] w-20">Status</th>
+                            <th className="text-left px-3 py-2 border-b border-[#E2E8F0] flex-1">Issues</th>
+                            <th className="text-left px-3 py-2 border-b border-[#E2E8F0] w-24">Edit</th>
                           </tr>
                         </thead>
                         <tbody>
                           {canvasPreview.items.map((item: CanvasPreviewItem) => {
                             const expanded = expandedPreviewRows.has(item.id);
                             return (
-                              <>
-                                <tr key={`row-${item.id}`} className="odd:bg-white even:bg-[#FCFDFF]">
+                              <React.Fragment key={item.id}>
+                                <tr className="odd:bg-white even:bg-[#FCFDFF] hover:bg-[#F0F4F8]">
                                   <td className="px-3 py-2 border-b border-[#F1F5F9]">
                                     <input
                                       type="checkbox"
                                       checked={item.includeInExport}
                                       onChange={(e) => handleCanvasIncludeToggle(item.id, e.target.checked)}
+                                      className="cursor-pointer"
                                     />
                                   </td>
-                                  <td className="px-3 py-2 border-b border-[#F1F5F9] font-medium text-[#0F172A]">{item.xmlFileName}</td>
+                                  <td className="px-3 py-2 border-b border-[#F1F5F9] font-medium text-[#0F172A] break-all">{item.xmlFileName}</td>
                                   <td className="px-3 py-2 border-b border-[#F1F5F9]">
                                     {item.status === "ready" ? (
                                       <Badge className="bg-[#DCFCE7] text-[#166534]">Ready</Badge>
                                     ) : (
-                                      <Badge className="bg-[#FEF3C7] text-[#92400E]">Skipped by Rule</Badge>
+                                      <Badge className="bg-[#FEF3C7] text-[#92400E]">Skipped</Badge>
                                     )}
                                   </td>
-                                  <td className="px-3 py-2 border-b border-[#F1F5F9] text-[#475569]">
-                                    {item.issues.length > 0 ? item.issues.join(' ') : '-'}
+                                  <td className="px-3 py-2 border-b border-[#F1F5F9] text-[#475569] text-xs max-w-xs overflow-hidden text-ellipsis">
+                                    {item.issues.length > 0 ? item.issues[0] : '-'}
                                   </td>
                                   <td className="px-3 py-2 border-b border-[#F1F5F9]">
                                     <Button
@@ -666,27 +685,42 @@ export function LMSExportPage() {
                                       variant="outline"
                                       size="sm"
                                       onClick={() => togglePreviewRow(item.id)}
+                                      className="whitespace-nowrap"
                                     >
                                       {expanded ? (
-                                        <><ChevronUp className="w-4 h-4 mr-1" /> Hide XML</>
+                                        <><ChevronUp className="w-4 h-4 mr-1" /> Hide</>
                                       ) : (
-                                        <><ChevronDown className="w-4 h-4 mr-1" /> Show XML</>
+                                        <><ChevronDown className="w-4 h-4 mr-1" /> Show</>
                                       )}
                                     </Button>
                                   </td>
                                 </tr>
                                 {expanded && (
-                                  <tr key={`editor-${item.id}`}>
-                                    <td className="px-3 py-3 border-b border-[#F1F5F9] bg-[#F8FAFC]" colSpan={5}>
-                                      <Textarea
-                                        value={item.xmlContent}
-                                        onChange={(e) => handleCanvasXmlChange(item.id, e.target.value)}
-                                        className="min-h-[240px] font-mono text-xs"
-                                      />
+                                  <tr className="bg-[#F8FAFC]">
+                                    <td className="px-3 py-3 border-b border-[#F1F5F9]" colSpan={5}>
+                                      <div className="space-y-2">
+                                        <p className="text-xs font-semibold text-[#64748B]">XML Content ({item.xmlContent.length} bytes)</p>
+                                        <Textarea
+                                          value={item.xmlContent}
+                                          onChange={(e) => handleCanvasXmlChange(item.id, e.target.value)}
+                                          className="min-h-[300px] font-mono text-xs border border-[#E2E8F0]"
+                                          spellCheck="false"
+                                        />
+                                        {item.issues.length > 0 && (
+                                          <div className="bg-[#FEF3C7] border border-[#FDBA74] rounded p-2">
+                                            <p className="text-xs font-semibold text-[#92400E]">Issues:</p>
+                                            <ul className="text-xs text-[#B45309] list-disc list-inside mt-1">
+                                              {item.issues.map((issue, idx) => (
+                                                <li key={idx}>{issue}</li>
+                                              ))}
+                                            </ul>
+                                          </div>
+                                        )}
+                                      </div>
                                     </td>
                                   </tr>
                                 )}
-                              </>
+                              </React.Fragment>
                             );
                           })}
                         </tbody>

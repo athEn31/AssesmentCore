@@ -95,7 +95,7 @@ export function LandingPage() {
   return (
     <div className="min-h-screen bg-[#FFFFFF]">
       {/* Navigation */}
-      <nav className="fixed top-0 w-full bg-[#1F2937] border-b border-[#334155] z-50">
+      <nav className="fixed top-0 w-full bg-white border-b border-[#E2E8F0] z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             {/* Logo */}
@@ -103,19 +103,19 @@ export function LandingPage() {
               <div className="w-8 h-8 bg-[#0F6CBD] rounded-lg flex items-center justify-center">
                 <FileCode className="w-5 h-5 text-white" />
               </div>
-              <span className="text-xl font-semibold text-white">
+              <span className="text-xl font-semibold text-[#1F2937]">
                 AssessmentCore
               </span>
             </div>
 
             {/* Desktop Menu */}
             <div className="hidden md:flex items-center gap-8">
-              <a href="#home" className="text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors">Home</a>
-              <a href="#features" className="text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors">Features</a>
-              <a href="#about" className="text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors">About</a>
-              <a href="#services" className="text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors">Services</a>
-              <a href="#faq" className="text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors">FAQ</a>
-              <a href="#contact" className="text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors">Contact</a>
+              <a href="#home" className="text-[#475569] hover:text-[#0F6CBD] transition-colors">Home</a>
+              <a href="#features" className="text-[#475569] hover:text-[#0F6CBD] transition-colors">Features</a>
+              <a href="#about" className="text-[#475569] hover:text-[#0F6CBD] transition-colors">About</a>
+              <a href="#services" className="text-[#475569] hover:text-[#0F6CBD] transition-colors">Services</a>
+              <a href="#faq" className="text-[#475569] hover:text-[#0F6CBD] transition-colors">FAQ</a>
+              <a href="#contact" className="text-[#475569] hover:text-[#0F6CBD] transition-colors">Contact</a>
               <Link to="/workspace">
                 <Button className="bg-[#0F6CBD] hover:bg-[#0B5A9A] active:bg-[#094A7F] text-white rounded-md">
                   Go to Workspace
@@ -126,7 +126,7 @@ export function LandingPage() {
 
             {/* Mobile Menu Button */}
             <button
-              className="md:hidden p-2"
+              className="md:hidden p-2 text-[#1F2937]"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             >
               {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
@@ -136,14 +136,14 @@ export function LandingPage() {
 
         {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div className="md:hidden border-t border-[#334155] bg-[#1F2937]">
+          <div className="md:hidden border-t border-[#E2E8F0] bg-white">
             <div className="px-4 py-4 space-y-3">
-              <a href="#home" className="block text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors py-2">Home</a>
-              <a href="#features" className="block text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors py-2">Features</a>
-              <a href="#about" className="block text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors py-2">About</a>
-              <a href="#services" className="block text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors py-2">Services</a>
-              <a href="#faq" className="block text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors py-2">FAQ</a>
-              <a href="#contact" className="block text-[#E2E8F0] hover:text-[#0F6CBD] transition-colors py-2">Contact</a>
+              <a href="#home" className="block text-[#475569] hover:text-[#0F6CBD] transition-colors py-2">Home</a>
+              <a href="#features" className="block text-[#475569] hover:text-[#0F6CBD] transition-colors py-2">Features</a>
+              <a href="#about" className="block text-[#475569] hover:text-[#0F6CBD] transition-colors py-2">About</a>
+              <a href="#services" className="block text-[#475569] hover:text-[#0F6CBD] transition-colors py-2">Services</a>
+              <a href="#faq" className="block text-[#475569] hover:text-[#0F6CBD] transition-colors py-2">FAQ</a>
+              <a href="#contact" className="block text-[#475569] hover:text-[#0F6CBD] transition-colors py-2">Contact</a>
               <Link to="/workspace" className="block">
                 <Button className="w-full bg-[#0F6CBD] hover:bg-[#0B5A9A] active:bg-[#094A7F] text-white rounded-md">
                   Go to Workspace
@@ -671,4 +671,3 @@ export function LandingPage() {
     </div>
   );
 }
-

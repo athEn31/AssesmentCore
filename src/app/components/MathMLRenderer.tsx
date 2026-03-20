@@ -26,7 +26,7 @@ export function MathMLRenderer({ content, className = '', inline = false }: Math
   return (
     <Tag
       ref={containerRef as any}
-      className={className}
+      className={`qti-rendered-content ${className}`.trim()}
       style={{ wordWrap: 'break-word', overflowWrap: 'break-word' }}
     />
   );

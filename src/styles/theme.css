@@ -181,3 +181,32 @@
     line-height: 1.5;
   }
 }
+
+@layer components {
+  .qti-rendered-content {
+    overflow: visible;
+  }
+
+  .qti-rendered-content > *:first-child {
+    margin-top: 0;
+  }
+
+  .qti-rendered-content > *:last-child {
+    margin-bottom: 0;
+  }
+
+  .qti-rendered-content ul,
+  .qti-rendered-content ol {
+    list-style-position: inside;
+    padding-inline-start: 1.25rem;
+    margin-inline-start: 0;
+  }
+
+  .qti-rendered-content ul {
+    list-style-type: disc;
+  }
+
+  .qti-rendered-content ol {
+    list-style-type: decimal;
+  }
+}

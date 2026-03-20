@@ -53,6 +53,11 @@ import { parseFile, detectQuestionColumns } from "../../utils/fileParser";
 import { validateAllQuestions, ValidationResult } from "../../utils/questionValidator";
 import { validateAllQuestionsChunked, validateRowsSubset } from "../../utils/chunkedValidator";
 import { convertToQTIQuestion, generateJSON, generateQTI } from "../../utils/qtiConverter";
+import { applyTemplateXmlToGeneratedItem } from "../../utils/templateXmlApplier";
+import { TemplateMappingUI } from "../../components/TemplateMappingUI";
+import { ExtractedTemplate } from "../../utils/templateFieldExtractor";
+import { ColumnMapping, SheetRow } from "../../utils/templateDataMapper";
+import { generateQtiFromMappedData } from "../../utils/templateDataMapper";
 import { 
   generateAndValidateMCQ, 
   generateAndValidateTextEntry, 
@@ -60,6 +65,7 @@ import {
   Question as QTIQuestion 
 } from "../../../engine";
 import { processXmlMath } from "../../utils/mathmlConverter";
+import { replacePlaceholder, hasFeedbackPlaceholders, listPlaceholdersInNode, removePlaceholderSection } from "../../utils/placeholderHandler";
 import { useAuth } from "../../../contexts/AuthContext";
 import {
   validateBatch as runAIValidation,
@@ -242,8 +248,14 @@ export function BatchCreator() {
   const [mathFormat, setMathFormat] = useState<"mathjax" | "mathml" | "">("");
   const [hasTemplateXml, setHasTemplateXml] = useState<"yes" | "no" | "">("");
   const [templateXmlFile, setTemplateXmlFile] = useState<File | null>(null);
+  const [templateXmlContent, setTemplateXmlContent] = useState<string>("");
+  const [showTemplateMappingUI, setShowTemplateMappingUI] = useState(false);
+  const [templateMapping, setTemplateMapping] = useState<ColumnMapping | null>(null);
+  const [templateSheetData, setTemplateSheetData] = useState<SheetRow[]>([]);
+  const [extractedTemplate, setExtractedTemplate] = useState<ExtractedTemplate | null>(null);
   const [configurationValidationError, setConfigurationValidationError] = useState<string>("");
   const [showConfigErrors, setShowConfigErrors] = useState(false);
+  const [reportDatasetName, setReportDatasetName] = useState<string>('');
 
   // AI Validation state
   const [aiValidationEnabled, setAiValidationEnabled] = useState(false);
@@ -275,10 +287,358 @@ export function BatchCreator() {
   }, [canUseAIValidation, aiValidationEnabled]);
 
   useEffect(() => {
+    // Load template XML content when file changes
+    if (templateXmlFile && showTemplateMappingUI) {
+      templateXmlFile.text().then((content) => {
+        setTemplateXmlContent(content);
+      });
+    }
+  }, [templateXmlFile, showTemplateMappingUI]);
+
+  useEffect(() => {
     if (columnMapping?.imageCol) {
       setQuestionMatchColumnForManualMap(columnMapping.imageCol);
     }
   }, [columnMapping?.imageCol]);
+
+  const readTemplateXmlContent = async (): Promise<string | null> => {
+    if (hasTemplateXml !== 'yes') {
+      return null;
+    }
+
+    if (!templateXmlFile) {
+      throw new Error('Template XML is required but no file was uploaded');
+    }
+
+    const xml = await templateXmlFile.text();
+    if (!xml || xml.trim() === '') {
+      throw new Error('Template XML file is empty');
+    }
+
+    return xml;
+  };
+
+  const applyTemplateIfNeeded = (
+    templateXmlContent: string | null,
+    xmlContent: string,
+    fileName: string,
+    row?: Record<string, any>,
+  ): string => {
+    if (!templateXmlContent) {
+      return xmlContent;
+    }
+
+    const localName = (nodeName: string): string => {
+      const parts = nodeName.split(':');
+      return parts[parts.length - 1];
+    };
+
+    const getMappedColumnByFieldName = (fieldName: string): string | null => {
+      if (!templateMapping || !extractedTemplate) {
+        return null;
+      }
+
+      const field = extractedTemplate.fields.find(
+        (f) => f.name.toLowerCase() === fieldName.toLowerCase()
+      );
+
+      if (!field) {
+        return null;
+      }
+
+      return templateMapping[field.id] || null;
+    };
+
+    const findSourceRowForMappedValues = (currentRow?: Record<string, any>): SheetRow | null => {
+      if (!currentRow) {
+        return null;
+      }
+
+      if (!templateSheetData || templateSheetData.length === 0) {
+        return currentRow as SheetRow;
+      }
+
+      const questionIdColumn = getMappedColumnByFieldName('Question ID');
+      if (questionIdColumn) {
+        const currentQuestionId = String(currentRow[questionIdColumn] ?? '').trim();
+        if (currentQuestionId) {
+          const matched = templateSheetData.find(
+            (r) => String(r[questionIdColumn] ?? '').trim() === currentQuestionId,
+          );
+          if (matched) {
+            return matched;
+          }
+        }
+      }
+
+      if (currentRow.id) {
+        const matchedById = templateSheetData.find((r) => String(r.id ?? '') === String(currentRow.id));
+        if (matchedById) {
+          return matchedById;
+        }
+      }
+
+      return currentRow as SheetRow;
+    };
+
+    const setInnerXml = (doc: Document, element: Element, xmlFragment: string): void => {
+      while (element.firstChild) {
+        element.removeChild(element.firstChild);
+      }
+
+      if (!xmlFragment || xmlFragment.trim() === '') {
+        return;
+      }
+
+      const fragmentDoc = new DOMParser().parseFromString(`<root>${xmlFragment}</root>`, 'application/xml');
+      if (fragmentDoc.querySelector('parsererror')) {
+        element.textContent = xmlFragment;
+        return;
+      }
+
+      const nodes = Array.from(fragmentDoc.documentElement.childNodes);
+      nodes.forEach((node) => element.appendChild(doc.importNode(node, true)));
+    };
+
+    const normalizeSubsectionToken = (name: string): string => {
+      return name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '') || 'subsection';
+    };
+
+    const getSubsectionMappings = (parentFieldNames: string[]): Array<{ placeholderName: string; columnName: string }> => {
+      if (!templateMapping || !extractedTemplate) {
+        return [];
+      }
+
+      const parentFieldIds = extractedTemplate.fields
+        .filter((f) => parentFieldNames.some((name) => f.name.toLowerCase() === name.toLowerCase()))
+        .map((f) => f.id);
+
+      if (parentFieldIds.length === 0) {
+        return [];
+      }
+
+      const result: Array<{ placeholderName: string; columnName: string }> = [];
+
+      Object.entries(templateMapping).forEach(([key, column]) => {
+        if (!column) {
+          return;
+        }
+
+        parentFieldIds.forEach((parentFieldId) => {
+          const prefix = `subsection::${parentFieldId}::`;
+          if (key.startsWith(prefix)) {
+            const rawToken = key.slice(prefix.length);
+            const placeholderName = normalizeSubsectionToken(rawToken);
+            if (placeholderName) {
+              result.push({ placeholderName, columnName: column });
+            }
+          }
+        });
+      });
+
+      return result;
+    };
+
+    const getFieldModeByName = (fieldName: string): 'add-column' | 'add-subsections' => {
+      if (!templateMapping || !extractedTemplate) {
+        return 'add-column';
+      }
+
+      const field = extractedTemplate.fields.find((f) => f.name.toLowerCase() === fieldName.toLowerCase());
+      if (!field) {
+        return 'add-column';
+      }
+
+      const mode = templateMapping[`mode::${field.id}`];
+      return mode === 'add-subsections' ? 'add-subsections' : 'add-column';
+    };
+
+    const applyMappedFeedbackOverrides = (
+      templateAppliedXml: string,
+      sourceRow: SheetRow | null,
+    ): string => {
+      if (!sourceRow || !templateMapping || !extractedTemplate) {
+        return templateAppliedXml;
+      }
+
+      const doc = new DOMParser().parseFromString(templateAppliedXml, 'application/xml');
+      if (doc.querySelector('parsererror')) {
+        return templateAppliedXml;
+      }
+
+      const localName = (nodeName: string): string => {
+        const parts = nodeName.split(':');
+        return parts[parts.length - 1];
+      };
+
+      const elements = Array.from(doc.querySelectorAll('*')) as Element[];
+      const feedbackNodes = elements.filter((el) => localName(el.nodeName) === 'modalFeedback');
+      const promptNodes = elements.filter((el) => localName(el.nodeName) === 'prompt');
+
+      // Apply globally mapped comment placeholders (anywhere in template XML).
+      const placeholderFields = extractedTemplate.fields.filter((field) => field.id.startsWith('placeholder_'));
+      placeholderFields.forEach((field) => {
+        const token = field.id.replace('placeholder_', '');
+        const columnName = templateMapping[field.id];
+        if (!columnName) return;
+        const value = String(sourceRow[columnName] ?? '');
+        replacePlaceholder(
+          doc.documentElement,
+          token,
+          value || null,
+          containsMath,
+          mathFormat,
+          processXmlMath,
+        );
+      });
+
+      // Apply subsection placeholders in Question Stem/Text Entry Prompt.
+      const questionSubsections = getSubsectionMappings(['Question Stem', 'Text Entry Prompt']);
+      const questionSubsectionMode =
+        getFieldModeByName('Question Stem') === 'add-subsections' ||
+        getFieldModeByName('Text Entry Prompt') === 'add-subsections';
+
+      if (questionSubsections.length > 0 || questionSubsectionMode) {
+        promptNodes.forEach((promptNode) => {
+          const mappedQuestionPlaceholders = new Set<string>();
+
+          questionSubsections.forEach(({ placeholderName, columnName }) => {
+            const value = String(sourceRow[columnName] ?? '');
+            mappedQuestionPlaceholders.add(placeholderName);
+
+            if (value.trim() === '') {
+              removePlaceholderSection(promptNode, placeholderName);
+            } else {
+              replacePlaceholder(
+                promptNode,
+                placeholderName,
+                value || null,
+                containsMath,
+                mathFormat,
+                processXmlMath,
+              );
+            }
+          });
+
+          // In subsection mode, remove unmapped subsection placeholder sections entirely.
+          if (questionSubsectionMode) {
+            const allPlaceholders = listPlaceholdersInNode(promptNode);
+            allPlaceholders.forEach((name) => {
+              const columnName = templateMapping[`placeholder_${name}`];
+              if (columnName) {
+                mappedQuestionPlaceholders.add(name);
+              }
+            });
+            allPlaceholders
+              .filter((name) => !mappedQuestionPlaceholders.has(name))
+              .forEach((missingName) => removePlaceholderSection(promptNode, missingName));
+          }
+        });
+      }
+
+      feedbackNodes.forEach((feedbackNode) => {
+        const identifier = (feedbackNode.getAttribute('identifier') || '').toLowerCase();
+        const isIncorrect = identifier.includes('incorrect') || identifier.includes('wrong');
+        const isCorrect = !isIncorrect && identifier.includes('correct');
+
+        // Check if this feedback block has placeholders
+        const hasPlaceholders = hasFeedbackPlaceholders(feedbackNode);
+        const incorrectSubsections = isIncorrect ? getSubsectionMappings(['Incorrect Feedback']) : [];
+        const incorrectSubsectionMode = isIncorrect && getFieldModeByName('Incorrect Feedback') === 'add-subsections';
+
+        if (hasPlaceholders) {
+          const mappedIncorrectPlaceholders = new Set<string>();
+          const placeholdersInFeedback = listPlaceholdersInNode(feedbackNode);
+          placeholdersInFeedback.forEach((placeholderName) => {
+            const columnName = templateMapping[`placeholder_${placeholderName}`];
+            if (!columnName) return;
+            const value = String(sourceRow[columnName] ?? '');
+            if (isIncorrect) {
+              mappedIncorrectPlaceholders.add(placeholderName);
+            }
+            replacePlaceholder(
+              feedbackNode,
+              placeholderName,
+              value || null,
+              containsMath,
+              mathFormat,
+              processXmlMath,
+            );
+          });
+
+          if (isIncorrect) {
+            // Also apply subsection mappings created in mapping UI.
+            incorrectSubsections.forEach(({ placeholderName, columnName }) => {
+              const value = String(sourceRow[columnName] ?? '');
+              mappedIncorrectPlaceholders.add(placeholderName);
+
+              if (value.trim() === '') {
+                removePlaceholderSection(feedbackNode, placeholderName);
+              } else {
+                replacePlaceholder(
+                  feedbackNode,
+                  placeholderName,
+                  value || null,
+                  containsMath,
+                  mathFormat,
+                  processXmlMath,
+                );
+              }
+            });
+
+            // In subsection mode, remove any unmapped subsection placeholder sections entirely.
+            if (incorrectSubsectionMode) {
+              const allPlaceholders = listPlaceholdersInNode(feedbackNode);
+              allPlaceholders.forEach((name) => {
+                const columnName = templateMapping[`placeholder_${name}`];
+                if (columnName) {
+                  mappedIncorrectPlaceholders.add(name);
+                }
+              });
+              allPlaceholders
+                .filter((name) => !mappedIncorrectPlaceholders.has(name))
+                .forEach((missingName) => removePlaceholderSection(feedbackNode, missingName));
+            }
+          }
+        } else if (incorrectSubsections.length === 0) {
+          // Fallback: use full block replacement for non-placeholder templates (backward compatibility)
+          const correctFeedbackColumn = getMappedColumnByFieldName('Correct Feedback');
+          const incorrectFeedbackColumn = getMappedColumnByFieldName('Incorrect Feedback');
+
+          if (isCorrect && correctFeedbackColumn) {
+            const rawValue = String(sourceRow[correctFeedbackColumn] ?? '');
+            const value = containsMath === 'yes' && mathFormat === 'mathml'
+              ? processXmlMath(rawValue)
+              : rawValue;
+            setInnerXml(doc, feedbackNode, value);
+          }
+
+          if (isIncorrect && incorrectFeedbackColumn) {
+            const rawValue = String(sourceRow[incorrectFeedbackColumn] ?? '');
+            const value = containsMath === 'yes' && mathFormat === 'mathml'
+              ? processXmlMath(rawValue)
+              : rawValue;
+            setInnerXml(doc, feedbackNode, value);
+          }
+        }
+      });
+
+      return new XMLSerializer().serializeToString(doc);
+    };
+
+    try {
+      const mergedXml = applyTemplateXmlToGeneratedItem(templateXmlContent, xmlContent);
+      const sourceRow = findSourceRowForMappedValues(row);
+      return applyMappedFeedbackOverrides(mergedXml, sourceRow);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Template XML enforcement failed for ${fileName}: ${message}`);
+    }
+  };
 
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -296,6 +656,28 @@ export function BatchCreator() {
 
     setTemplateXmlFile(files[0]);
     setConfigurationValidationError("");
+    // Show mapping UI after template is uploaded
+    setShowTemplateMappingUI(true);
+  };
+
+  const handleTemplateMappingComplete = (
+    mapping: ColumnMapping,
+    sheetRows: SheetRow[],
+    template: ExtractedTemplate,
+  ) => {
+    setTemplateMapping(mapping);
+    setTemplateSheetData(sheetRows);
+    setExtractedTemplate(template);
+    setShowTemplateMappingUI(false);
+    setConfigurationValidationError("");
+  };
+
+  const handleTemplateMappingCancel = () => {
+    setShowTemplateMappingUI(false);
+    setTemplateXmlFile(null);
+    setTemplateMapping(null);
+    setTemplateSheetData([]);
+    setExtractedTemplate(null);
   };
 
   const handleMediaFolderUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -713,26 +1095,28 @@ export function BatchCreator() {
       });
     }
 
-    // Check media references
-    if (columnMapping?.imageCol && mediaFiles.size > 0) {
-      const mediaValidation = validateMediaReferences(editedRows, columnMapping.imageCol, mediaFiles);
-      if (!mediaValidation.valid) {
-        mediaValidation.errors.forEach(e => {
-          errors.push(`Row ${e.rowNumber}: ${e.message}`);
+    // Check media references only when user explicitly enables images.
+    if (containsImages === 'yes') {
+      if (columnMapping?.imageCol && mediaFiles.size > 0) {
+        const mediaValidation = validateMediaReferences(editedRows, columnMapping.imageCol, mediaFiles);
+        if (!mediaValidation.valid) {
+          mediaValidation.errors.forEach(e => {
+            errors.push(`Row ${e.rowNumber}: ${e.message}`);
+          });
+        }
+      } else if (columnMapping?.imageCol) {
+        // Check if any row has a LOCAL image reference but no media ZIP uploaded
+        // (Ignore rows that already have full URLs)
+        const hasLocalImageRefs = editedRows.some(row => {
+          const imageValue = row[columnMapping.imageCol];
+          const valStr = imageValue ? String(imageValue).trim() : '';
+          // It's a local ref if it's not empty and doesn't look like a URL
+          return valStr !== '' && !valStr.startsWith('http://') && !valStr.startsWith('https://');
         });
-      }
-    } else if (columnMapping?.imageCol) {
-      // Check if any row has a LOCAL image reference but no media ZIP uploaded
-      // (Ignore rows that already have full URLs)
-      const hasLocalImageRefs = editedRows.some(row => {
-        const imageValue = row[columnMapping.imageCol];
-        const valStr = imageValue ? String(imageValue).trim() : '';
-        // It's a local ref if it's not empty and doesn't look like a URL
-        return valStr !== '' && !valStr.startsWith('http://') && !valStr.startsWith('https://');
-      });
-      
-      if (hasLocalImageRefs && mediaFiles.size === 0) {
-        errors.push('Questions reference local images but no media ZIP file was uploaded');
+
+        if (hasLocalImageRefs && mediaFiles.size === 0) {
+          errors.push('Questions reference local images but no media ZIP file was uploaded');
+        }
       }
     }
 
@@ -948,6 +1332,8 @@ export function BatchCreator() {
         return;
       }
 
+      const templateXmlContent = await readTemplateXmlContent();
+
       const zip = new JSZip();
       let exportCount = 0;
       const exportedFiles: Array<{ identifier: string; filename: string; imageFiles?: string[] }> = [];
@@ -1056,11 +1442,17 @@ export function BatchCreator() {
             xmlContent = (await generateQTI(oldQti, outputFormat === 'qti-1.2' ? '1.2' : outputFormat === 'qti-3.0' ? '3.0' : '2.1', 'xml')).xml || '';
           }
 
+          xmlContent = applyTemplateIfNeeded(templateXmlContent, xmlContent, fileName, row);
+
           zip.file(fileName, xmlContent);
           exportedFiles.push({ identifier: safeItemIdentifier, filename: fileName, imageFiles: itemImageFiles.length > 0 ? itemImageFiles : undefined });
           xmlFilesForValidation.push({ fileName, xmlContent });
           exportCount++;
         } catch (error) {
+          if (templateXmlContent) {
+            throw error;
+          }
+
           console.warn(`Error generating QTI for row ${row.id}:`, error);
           const oldQti = convertToQTIQuestion(row, questionType, columnMapping);
           oldQti.id = safeItemIdentifier;
@@ -1202,6 +1594,8 @@ export function BatchCreator() {
         return;
       }
 
+      const templateXmlContent = await readTemplateXmlContent();
+
       const zip = new JSZip();
       const xmlFolder = zip.folder('xml');
       const mediaFolder = zip.folder('media');
@@ -1306,11 +1700,16 @@ export function BatchCreator() {
             xmlContent = (await generateQTI(oldQti, outputFormat === 'qti-1.2' ? '1.2' : outputFormat === 'qti-3.0' ? '3.0' : '2.1', 'xml')).xml || '';
           }
 
+          xmlContent = applyTemplateIfNeeded(templateXmlContent, xmlContent, fileName, row);
           xmlContent = ensureXmlContainsImageTagForXmlMedia(xmlContent, imageFilenameStr);
           xmlFolder.file(fileName, xmlContent);
           xmlFilesForValidation.push({ fileName, xmlContent });
           exportCount++;
         } catch (error) {
+          if (templateXmlContent) {
+            throw error;
+          }
+
           console.warn(`Error generating XML for row ${row.id}:`, error);
           const oldQti = convertToQTIQuestion(row, questionType, columnMapping);
           oldQti.id = safeItemIdentifier;
@@ -1472,6 +1871,8 @@ export function BatchCreator() {
 
     setAiValidationPhase('running');
     try {
+      const templateXmlContent = await readTemplateXmlContent();
+
       // Generate XML items for validation
       const itemsToValidate: Array<{ fileName: string; xmlContent: string }> = [];
 
@@ -1565,8 +1966,14 @@ export function BatchCreator() {
             )).xml || '';
           }
 
+          xmlContent = applyTemplateIfNeeded(templateXmlContent, xmlContent, fileName, row);
+
           itemsToValidate.push({ fileName, xmlContent });
         } catch (error) {
+          if (templateXmlContent) {
+            throw error;
+          }
+
           console.error(`Error generating XML for item ${i + 1}:`, error);
         }
       }
@@ -1824,15 +2231,307 @@ export function BatchCreator() {
       rejected: 0,
       total: validationResults.size,
       duplicates: 0,
+      missingAnswers: 0,
+      formattingIssues: 0,
     };
     validationResults.forEach(result => {
       stats[result.status]++;
-      // Count questions with duplicate warnings
-      if (result.warnings.some(w => w.field === 'Duplicate')) {
+
+      const issues = [...result.criticalErrors, ...result.warnings];
+      const hasDuplicate = issues.some(issue => issue.field === 'Duplicate');
+      const hasMissingAnswer = issues.some(
+        issue => issue.field === 'Correct Answer' || issue.field === 'Correct Answers'
+      );
+      const hasFormattingIssue = issues.some(
+        issue =>
+          issue.field !== 'Duplicate' &&
+          issue.field !== 'Correct Answer' &&
+          issue.field !== 'Correct Answers'
+      );
+
+      if (hasDuplicate) {
         stats.duplicates++;
+      }
+
+      if (hasMissingAnswer) {
+        stats.missingAnswers++;
+      }
+
+      if (hasFormattingIssue) {
+        stats.formattingIssues++;
       }
     });
     return stats;
+  };
+
+  const escapeHtml = (value: unknown): string => {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  };
+
+  const handleDownloadValidationReport = () => {
+    const reportStats = getValidationStats();
+    const total = Math.max(1, reportStats.total);
+    const readyQuestions = reportStats.valid + reportStats.caution;
+    const needsReview = reportStats.caution + reportStats.rejected;
+    const duplicatePercentageValue = (reportStats.duplicates / total) * 100;
+    const needsReviewPercentageValue = (needsReview / total) * 100;
+    const duplicatePercentage = duplicatePercentageValue.toFixed(1);
+    const needsReviewPercentage = needsReviewPercentageValue.toFixed(1);
+
+    const duplicateRows = Array.from(validationResults.values())
+      .filter((result) => result.warnings.some((warning) => warning.field === 'Duplicate'))
+      .sort((a, b) => a.rowNumber - b.rowNumber);
+
+    const duplicateQuestionMap = new Map<string, { label: string; rows: number[] }>();
+    duplicateRows.forEach((result) => {
+      const sourceRow = editedRows.find((row) => row.id === result.rowId);
+      const rawQuestion = columnMapping?.questionCol
+        ? String(sourceRow?.[columnMapping.questionCol] || '').trim()
+        : '';
+      const key = rawQuestion.toLowerCase().replace(/\s+/g, ' ').trim() || `row-${result.rowNumber}`;
+
+      if (!duplicateQuestionMap.has(key)) {
+        duplicateQuestionMap.set(key, {
+          label: rawQuestion || `Question at row ${result.rowNumber}`,
+          rows: [],
+        });
+      }
+
+      duplicateQuestionMap.get(key)!.rows.push(result.rowNumber);
+    });
+
+    const duplicateQuestionDetails = Array.from(duplicateQuestionMap.values())
+      .map((entry) => ({
+        label: entry.label,
+        rows: Array.from(new Set(entry.rows)).sort((a, b) => a - b),
+      }))
+      .filter((entry) => entry.rows.length > 1)
+      .sort((a, b) => a.rows[0] - b.rows[0]);
+
+    const duplicateDetailsHtml = duplicateQuestionDetails.length
+      ? `<ul class="list">${duplicateQuestionDetails
+          .map(
+            (entry) => `<li><strong>${escapeHtml(entry.label)}</strong> - appeared ${entry.rows.length} times (rows: ${entry.rows.join(', ')})</li>`
+          )
+          .join('')}</ul>`
+      : 'No duplicate groups found.';
+
+    const flaggedRows = editedRows
+      .map((row) => {
+        const result = validationResults.get(row.id);
+        if (!result) return null;
+
+        const issues = [...result.criticalErrors, ...result.warnings];
+        if (issues.length === 0) return null;
+
+        const issueLabels = issues.map((issue) => {
+          if (issue.field === 'Duplicate') return 'Duplicate Questions';
+          if (issue.field === 'Correct Answer' || issue.field === 'Correct Answers') return 'Missing Critical Data';
+          return 'Formatting Issues';
+        });
+
+        const uniqueIssueLabels = Array.from(new Set(issueLabels));
+
+        return {
+          rowNumber: result.rowNumber,
+          questionId: row.id || '-',
+          questionText: columnMapping?.questionCol ? String(row[columnMapping.questionCol] || '') : '',
+          categories: uniqueIssueLabels.join(', '),
+          messages: issues.map((issue) => `${issue.field}: ${issue.message}`).join(' | '),
+        };
+      })
+      .filter((row): row is {
+        rowNumber: number;
+        questionId: string;
+        questionText: string;
+        categories: string;
+        messages: string;
+      } => row !== null)
+      .sort((a, b) => a.rowNumber - b.rowNumber);
+
+    const datasetName = reportDatasetName.trim() || fileData?.fileName || 'Untitled Dataset';
+    const currentDate = new Date().toLocaleDateString();
+
+    const appendixRowsHtml = flaggedRows.length
+      ? flaggedRows
+          .map(
+            (entry) => `
+              <tr>
+                <td>${entry.rowNumber}</td>
+                <td>${escapeHtml(entry.questionId)}</td>
+                <td>${escapeHtml(entry.categories)}</td>
+                <td>${escapeHtml(entry.questionText || '-')}</td>
+                <td>${escapeHtml(entry.messages)}</td>
+              </tr>`
+          )
+          .join('')
+      : `
+        <tr>
+          <td colspan="5">No issues found.</td>
+        </tr>`;
+
+    const reportHtml = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>AssessmentCore Report</title>
+    <style>
+      @page { size: A4; margin: 14mm; }
+      body { font-family: "Segoe UI", Tahoma, Arial, sans-serif; color: #0f172a; line-height: 1.4; }
+      .container { max-width: 980px; margin: 0 auto; }
+      .header { border-bottom: 2px solid #0f6cbd; padding-bottom: 10px; margin-bottom: 14px; }
+      .title { font-size: 22px; font-weight: 700; color: #0f6cbd; margin: 0; }
+      .meta { margin-top: 6px; font-size: 13px; color: #334155; }
+      .section { margin-top: 14px; border: 1px solid #dbe4ef; border-radius: 8px; padding: 12px; }
+      .section h2 { margin: 0 0 10px; font-size: 16px; color: #0f172a; }
+      .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+      .tile { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px; }
+      .tile .label { font-size: 12px; color: #475569; }
+      .tile .value { font-size: 18px; font-weight: 700; color: #0f172a; }
+      .issues { width: 100%; border-collapse: collapse; font-size: 12px; }
+      .issues th, .issues td { border: 1px solid #dbe4ef; padding: 6px; text-align: left; vertical-align: top; }
+      .issues th { background: #f1f5f9; }
+      .list { margin: 0; padding-left: 18px; }
+      .warning-list { margin: 8px 0 0; padding-left: 20px; color: #b45309; }
+      .muted { color: #475569; }
+      .appendix-title { margin-top: 18px; font-size: 16px; }
+      .print-note { margin-top: 10px; font-size: 11px; color: #64748b; }
+      @media print {
+        .print-note { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header class="header">
+        <h1 class="title">AssessmentCore - Question Bank Processing Report</h1>
+        <div class="meta"><strong>Dataset:</strong> ${escapeHtml(datasetName)}</div>
+        <div class="meta"><strong>Date:</strong> ${escapeHtml(currentDate)}</div>
+      </header>
+
+      <section class="section">
+        <h2>Executive Summary</h2>
+        <div class="grid">
+          <div class="tile"><div class="label">Total Questions</div><div class="value">${reportStats.total}</div></div>
+          <div class="tile"><div class="label">Ready For Use</div><div class="value">${readyQuestions}</div></div>
+          <div class="tile"><div class="label">Rejected</div><div class="value">${reportStats.rejected}</div></div>
+          <div class="tile"><div class="label">Duplicate Count</div><div class="value">${reportStats.duplicates}</div></div>
+          <div class="tile"><div class="label">Duplicate Percentage</div><div class="value">${duplicatePercentage}%</div></div>
+          <div class="tile"><div class="label">Needs Review</div><div class="value">${needsReview}</div></div>
+          <div class="tile"><div class="label">Needs Review Percentage</div><div class="value">${needsReviewPercentage}%</div></div>
+        </div>
+        <ul class="warning-list">
+          <li>⚠ Dataset is not ready for direct LMS import</li>
+          <li>⚠ High risk of errors if uploaded without cleaning</li>
+        </ul>
+      </section>
+
+      <section class="section">
+        <h2>Key Issues</h2>
+        <table class="issues">
+          <thead>
+            <tr>
+              <th>Issue Type</th>
+              <th>Count</th>
+              <th>Description</th>
+              <th>Examples</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Duplicate Questions</td>
+              <td>${reportStats.duplicates}</td>
+              <td>Duplicate questions detected in the dataset.</td>
+              <td>${duplicateDetailsHtml}</td>
+            </tr>
+            <tr>
+              <td>Missing Critical Data</td>
+              <td>${reportStats.missingAnswers}</td>
+              <td>Questions missing correct answers cannot be imported into LMS.</td>
+              <td>-</td>
+            </tr>
+            <tr>
+              <td>Formatting Issues</td>
+              <td>${reportStats.formattingIssues}</td>
+              <td>Inconsistent structure detected across multiple questions.</td>
+              <td>-</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="section">
+        <h2>Processing Actions</h2>
+        <ul class="list">
+          <li>Duplicate detection and tagging</li>
+          <li>Validation of required fields</li>
+          <li>Standardization of structure</li>
+          <li>Preparation of LMS-ready output</li>
+        </ul>
+      </section>
+
+      <section class="section">
+        <h2>Output</h2>
+        <ul class="list">
+          <li>Cleaned Dataset</li>
+          <li>QTI Package</li>
+          <li>JSON Output</li>
+        </ul>
+      </section>
+
+      <section class="section">
+        <h2>Impact</h2>
+        <p class="muted">Without automation, approximately ${needsReviewPercentage}% of this dataset would require manual cleaning.</p>
+        <p class="muted">For larger datasets (10,000+ questions), this translates to several hours or days of manual effort.</p>
+        <p class="muted">AssessmentCore eliminates this effort and ensures LMS-ready compatibility.</p>
+      </section>
+
+      <section class="section">
+        <h2>Next Steps</h2>
+        <p class="muted">We can process your full dataset and deliver fully structured, LMS-ready question banks.</p>
+        <p class="muted">Contact us to get a processing estimate.</p>
+      </section>
+
+      <h2 class="appendix-title">Appendix: All Issues (Sorted By Row Number)</h2>
+      <table class="issues">
+        <thead>
+          <tr>
+            <th>Row #</th>
+            <th>Question ID</th>
+            <th>Category</th>
+            <th>Question</th>
+            <th>Issue Details</th>
+          </tr>
+        </thead>
+        <tbody>${appendixRowsHtml}</tbody>
+      </table>
+
+      <div class="print-note">This report will open the browser print dialog automatically. Choose Save as PDF to download.</div>
+    </div>
+    <script>
+      window.onload = function () {
+        setTimeout(function () {
+          window.print();
+        }, 250);
+      };
+    </script>
+  </body>
+</html>`;
+
+    const reportWindow = window.open('', '_blank');
+    if (!reportWindow) {
+      alert('Popup blocked. Please allow popups and try again to generate the PDF report.');
+      return;
+    }
+
+    reportWindow.document.open();
+    reportWindow.document.write(reportHtml);
+    reportWindow.document.close();
   };
 
   const stats = getValidationStats();
@@ -2052,6 +2751,31 @@ export function BatchCreator() {
 
   return (
     <div className="h-full bg-[#F8FAFC]">
+      {/* Template Mapping UI Modal */}
+      {showTemplateMappingUI && templateXmlFile && uploadedFiles[0] && templateXmlContent && (
+          <div className="fixed inset-0 bg-[#F8FAFC]/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="w-full max-w-4xl my-auto cursor-default">
+            <TemplateMappingUI
+              templateXml={templateXmlContent}
+              sheetFile={uploadedFiles[0]}
+              selectedQtiVersion={
+                outputFormat === "qti-1.2"
+                  ? "1.2"
+                  : outputFormat === "qti-2.1"
+                  ? "2.1"
+                  : outputFormat === "qti-3.0"
+                  ? "3.0"
+                  : outputFormat === "json"
+                  ? "JSON"
+                  : ""
+              }
+              onMappingComplete={handleTemplateMappingComplete}
+              onCancel={handleTemplateMappingCancel}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-[#FFFFFF] border-b border-[#E2E8F0] px-6 h-28 flex items-center">
         <div className="flex items-center justify-between">
@@ -2266,10 +2990,12 @@ export function BatchCreator() {
                     setExportValidationError("");
                     setConfigurationValidationError("");
                   }}>
-                    <SelectTrigger className={outputFormat === "" && showConfigErrors ? "border-red-500" : ""}>
+                    <SelectTrigger
+                      className={`border border-[#E2E8F0] bg-white ${outputFormat === "" && showConfigErrors ? "border-red-500" : ""}`}
+                    >
                       <SelectValue placeholder="Select QTI version" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="border border-[#E2E8F0] bg-white shadow-lg">
                       <SelectItem value="qti-1.2">QTI 1.2</SelectItem>
                       <SelectItem value="qti-2.1">QTI 2.1</SelectItem>
                       <SelectItem value="qti-3.0">QTI 3.0</SelectItem>
@@ -2290,10 +3016,12 @@ export function BatchCreator() {
                     setExportValidationError("");
                     setConfigurationValidationError("");
                   }}>
-                    <SelectTrigger className={exportMode === "" && showConfigErrors ? "border-red-500" : ""}>
+                    <SelectTrigger
+                      className={`border border-[#E2E8F0] bg-white ${exportMode === "" && showConfigErrors ? "border-red-500" : ""}`}
+                    >
                       <SelectValue placeholder="Select export format" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="border border-[#E2E8F0] bg-white shadow-lg">
                       <SelectItem value="qti-package">QTI Package (ZIP with manifest)</SelectItem>
                       <SelectItem value="xml-media-folder">XML + Media Folder</SelectItem>
                     </SelectContent>
@@ -2323,10 +3051,12 @@ export function BatchCreator() {
                       setMediaValidationErrors([]);
                     }
                   }}>
-                    <SelectTrigger className={containsImages === "" && showConfigErrors ? "border-red-500" : ""}>
+                    <SelectTrigger
+                      className={`border border-[#E2E8F0] bg-white ${containsImages === "" && showConfigErrors ? "border-red-500" : ""}`}
+                    >
                       <SelectValue placeholder="Select yes or no" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="border border-[#E2E8F0] bg-white shadow-lg">
                       <SelectItem value="yes">Yes</SelectItem>
                       <SelectItem value="no">No</SelectItem>
                     </SelectContent>
@@ -2344,10 +3074,12 @@ export function BatchCreator() {
                       setMathFormat("");
                     }
                   }}>
-                    <SelectTrigger className={containsMath === "" && showConfigErrors ? "border-red-500" : ""}>
+                    <SelectTrigger
+                      className={`border border-[#E2E8F0] bg-white ${containsMath === "" && showConfigErrors ? "border-red-500" : ""}`}
+                    >
                       <SelectValue placeholder="Select yes or no" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="border border-[#E2E8F0] bg-white shadow-lg">
                       <SelectItem value="yes">Yes</SelectItem>
                       <SelectItem value="no">No</SelectItem>
                     </SelectContent>
@@ -2363,10 +3095,12 @@ export function BatchCreator() {
                       setMathFormat(v as "mathjax" | "mathml");
                       setConfigurationValidationError("");
                     }}>
-                      <SelectTrigger className={mathFormat === "" && showConfigErrors ? "border-red-500" : ""}>
+                      <SelectTrigger
+                        className={`border border-[#E2E8F0] bg-white ${mathFormat === "" && showConfigErrors ? "border-red-500" : ""}`}
+                      >
                         <SelectValue placeholder="Select math format" />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="border border-[#E2E8F0] bg-white shadow-lg">
                         <SelectItem value="mathjax">MathJax</SelectItem>
                         <SelectItem value="mathml">MathML</SelectItem>
                       </SelectContent>
@@ -2385,10 +3119,12 @@ export function BatchCreator() {
                       setTemplateXmlFile(null);
                     }
                   }}>
-                    <SelectTrigger className={hasTemplateXml === "" && showConfigErrors ? "border-red-500" : ""}>
+                    <SelectTrigger
+                      className={`border border-[#E2E8F0] bg-white ${hasTemplateXml === "" && showConfigErrors ? "border-red-500" : ""}`}
+                    >
                       <SelectValue placeholder="Select yes or no" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="border border-[#E2E8F0] bg-white shadow-lg">
                       <SelectItem value="yes">Yes</SelectItem>
                       <SelectItem value="no">No</SelectItem>
                     </SelectContent>
@@ -2576,10 +3312,28 @@ export function BatchCreator() {
                       <p className="font-medium text-[#16A34A]">{stats.valid + stats.caution}</p>
                     </div>
                   </div>
+
+                  <div>
+                    <p className="text-sm text-[#475569] mb-1">Dataset Name (for PDF report)</p>
+                    <Input
+                      value={reportDatasetName}
+                      onChange={(event) => setReportDatasetName(event.target.value)}
+                      placeholder={fileData?.fileName || 'Enter dataset name'}
+                    />
+                  </div>
                 </CardContent>
               </Card>
 
               <div className="ml-4 flex flex-col gap-2">
+                <Button
+                  onClick={handleDownloadValidationReport}
+                  variant="outline"
+                  className="font-semibold border border-[#0F6CBD] text-[#0F6CBD] hover:bg-[#EFF6FF] rounded-md"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  Download PDF Report
+                </Button>
+
                 <Button
                   onClick={() => setShowValidationReport(!showValidationReport)}
                   variant={showValidationReport ? "default" : "outline"}
@@ -2642,7 +3396,7 @@ export function BatchCreator() {
                           <SelectTrigger>
                             <SelectValue placeholder="Select question match column" />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent className="border border-[#E2E8F0] bg-white shadow-lg">
                             <SelectItem value="__row_serial__">Row Serial (#)</SelectItem>
                             {(fileData?.columns || []).map((col) => (
                               <SelectItem key={`manual-map-col-${col}`} value={col}>{col}</SelectItem>
@@ -2660,7 +3414,7 @@ export function BatchCreator() {
                           <SelectTrigger>
                             <SelectValue placeholder="Select uploaded table column" />
                           </SelectTrigger>
-                          <SelectContent>
+                          <SelectContent className="border border-[#E2E8F0] bg-white shadow-lg">
                             <SelectItem value="fileName">Image File Name</SelectItem>
                             <SelectItem value="serialNumber">Serial Number</SelectItem>
                           </SelectContent>

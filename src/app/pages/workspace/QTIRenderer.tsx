@@ -39,6 +39,7 @@ interface ParsedQuestion {
   title: string;
   type: 'mcq' | 'textentry';
   stem: string;
+  textEntryExpectedLength?: number;
   choices?: ParsedChoice[];
   correctAnswer?: string;
   correctAnswers?: string[];
@@ -80,6 +81,85 @@ function getInnerHTMLExcluding(el: Element, excludeSelectors: string[]): string 
     clone.querySelectorAll(sel).forEach(node => node.parentNode?.removeChild(node));
   }
   return getInnerHTML(clone);
+}
+
+const FEEDBACK_SELECTORS = 'feedbackBlock, modalFeedback, qti-modal-feedback, qti-feedback-block';
+
+function isIncorrectFeedbackNode(node: Element): boolean {
+  const identifier = (node.getAttribute('identifier') || '').toLowerCase();
+  const outcomeIdentifier = (
+    node.getAttribute('outcomeIdentifier')
+    || node.getAttribute('outcome-identifier')
+    || ''
+  ).toLowerCase();
+
+  return (
+    identifier === 'incorrect'
+    || identifier.includes('incorrect')
+    || identifier.includes('wrong')
+    || outcomeIdentifier.includes('incorrect')
+    || outcomeIdentifier.includes('wrong')
+  );
+}
+
+function isCorrectFeedbackNode(node: Element): boolean {
+  const identifier = (node.getAttribute('identifier') || '').toLowerCase();
+  const outcomeIdentifier = (
+    node.getAttribute('outcomeIdentifier')
+    || node.getAttribute('outcome-identifier')
+    || ''
+  ).toLowerCase();
+
+  if (isIncorrectFeedbackNode(node)) {
+    return false;
+  }
+
+  return (
+    identifier === 'correct'
+    || identifier.includes('correct')
+    || outcomeIdentifier.includes('correct')
+  );
+}
+
+function extractFeedback(item: Element, itemBody: Element | null): {
+  feedbackText: string;
+  correctFeedback: string;
+  incorrectFeedback: string;
+} {
+  let feedbackText = '';
+  let correctFeedback = '';
+  let incorrectFeedback = '';
+
+  const itemBodyFeedbacks = itemBody ? Array.from(itemBody.querySelectorAll(FEEDBACK_SELECTORS)) : [];
+  const itemLevelFeedbacks = Array.from(item.querySelectorAll(FEEDBACK_SELECTORS));
+
+  const seen = new Set<Element>();
+  const allFeedbacks = [...itemBodyFeedbacks, ...itemLevelFeedbacks].filter((fb) => {
+    if (seen.has(fb)) return false;
+    seen.add(fb);
+    return true;
+  });
+
+  for (const fb of allFeedbacks) {
+    const text = getInnerHTML(fb).trim();
+    if (!text) continue;
+
+    if (isIncorrectFeedbackNode(fb) && !incorrectFeedback) {
+      incorrectFeedback = text;
+      continue;
+    }
+
+    if (isCorrectFeedbackNode(fb) && !correctFeedback) {
+      correctFeedback = text;
+      continue;
+    }
+
+    if (!feedbackText) {
+      feedbackText = text;
+    }
+  }
+
+  return { feedbackText, correctFeedback, incorrectFeedback };
 }
 
 // ── QTI XML Parser ─────────────────────────────────────────────────────────────
@@ -135,7 +215,7 @@ function parseQTIXml(xmlString: string): ParsedQuestion[] {
       } else if (itemBody) {
         const pTags = itemBody.querySelectorAll('p, qti-content-body > *');
         for (const p of Array.from(pTags)) {
-          if (!p.closest('feedbackBlock') && !p.closest('qti-modal-feedback')) {
+          if (!p.closest(FEEDBACK_SELECTORS)) {
             const html = getInnerHTML(p);
             if (html) {
               stem += (stem ? '<br/>' : '') + html;
@@ -170,30 +250,7 @@ function parseQTIXml(xmlString: string): ParsedQuestion[] {
         }
       }
 
-      let feedbackText = '';
-      let correctFeedback = '';
-      let incorrectFeedback = '';
-
-      const allFeedbacks = itemBody?.querySelectorAll('feedbackBlock, qti-modal-feedback') || [];
-      for (const fb of Array.from(allFeedbacks)) {
-        const fbIdentifier = fb.getAttribute('identifier') || '';
-        const text = getInnerHTML(fb);
-
-        if (fbIdentifier.toLowerCase().includes('correct') || fbIdentifier === 'CORRECT') {
-          correctFeedback = text;
-        } else if (fbIdentifier.toLowerCase().includes('incorrect') || fbIdentifier === 'INCORRECT') {
-          incorrectFeedback = text;
-        } else if (!feedbackText) {
-          feedbackText = text;
-        }
-      }
-
-      if (!feedbackText && !correctFeedback && !incorrectFeedback) {
-        const feedback = item.querySelector('feedbackBlock, qti-modal-feedback');
-        if (feedback) {
-          feedbackText = getInnerHTML(feedback);
-        }
-      }
+      const { feedbackText, correctFeedback, incorrectFeedback } = extractFeedback(item, itemBody);
 
       questions.push({
         identifier,
@@ -208,6 +265,13 @@ function parseQTIXml(xmlString: string): ParsedQuestion[] {
       });
 
     } else if (textEntryInteraction) {
+      const expectedLengthAttr = textEntryInteraction.getAttribute('expectedLength')
+        || textEntryInteraction.getAttribute('expected-length');
+      const parsedExpectedLength = expectedLengthAttr ? Number(expectedLengthAttr) : NaN;
+      const expectedLength = Number.isFinite(parsedExpectedLength) && parsedExpectedLength > 0
+        ? Math.round(parsedExpectedLength)
+        : undefined;
+
       let itemBody = item.querySelector('itemBody');
       if (!itemBody) {
         itemBody = item.querySelector('qti-item-body');
@@ -217,7 +281,7 @@ function parseQTIXml(xmlString: string): ParsedQuestion[] {
       if (itemBody) {
         const pTags = itemBody.querySelectorAll('p, qti-content-body > *');
         for (const p of Array.from(pTags)) {
-          if (!p.closest('feedbackBlock') && !p.closest('qti-modal-feedback')) {
+          if (!p.closest(FEEDBACK_SELECTORS)) {
             const html = getInnerHTML(p);
             if (html) {
               stem += (stem ? '<br/>' : '') + html;
@@ -228,7 +292,7 @@ function parseQTIXml(xmlString: string): ParsedQuestion[] {
           // Fallback: serialize the itemBody excluding interactions and feedback
           stem = getInnerHTMLExcluding(itemBody, [
             'textEntryInteraction', 'qti-text-entry-interaction',
-            'feedbackBlock', 'qti-modal-feedback',
+            'feedbackBlock', 'modalFeedback', 'qti-modal-feedback', 'qti-feedback-block',
           ]);
         }
       }
@@ -250,36 +314,14 @@ function parseQTIXml(xmlString: string): ParsedQuestion[] {
         });
       }
 
-      let feedbackText = '';
-      let correctFeedback = '';
-      let incorrectFeedback = '';
-
-      const allFeedbacks = itemBody?.querySelectorAll('feedbackBlock, qti-modal-feedback') || [];
-      for (const fb of Array.from(allFeedbacks)) {
-        const fbIdentifier = fb.getAttribute('identifier') || '';
-        const text = getInnerHTML(fb);
-
-        if (fbIdentifier.toLowerCase().includes('correct') || fbIdentifier === 'CORRECT') {
-          correctFeedback = text;
-        } else if (fbIdentifier.toLowerCase().includes('incorrect') || fbIdentifier === 'INCORRECT') {
-          incorrectFeedback = text;
-        } else if (!feedbackText) {
-          feedbackText = text;
-        }
-      }
-
-      if (!feedbackText && !correctFeedback && !incorrectFeedback) {
-        const feedback = item.querySelector('feedbackBlock, qti-modal-feedback');
-        if (feedback) {
-          feedbackText = getInnerHTML(feedback);
-        }
-      }
+      const { feedbackText, correctFeedback, incorrectFeedback } = extractFeedback(item, itemBody);
 
       questions.push({
         identifier,
         title,
         type: 'textentry',
         stem,
+        textEntryExpectedLength: expectedLength,
         correctAnswers,
         feedbackText,
         correctFeedback,
@@ -294,42 +336,51 @@ function parseQTIXml(xmlString: string): ParsedQuestion[] {
 // ── Feedback Block ─────────────────────────────────────────────────────────────
 
 function FeedbackBlock({ isCorrect, question }: { isCorrect: boolean; question: ParsedQuestion }) {
+  const correctChoice = question.type === 'mcq'
+    ? question.choices?.find((choice) => choice.identifier === question.correctAnswer)
+    : null;
+
   return (
     <div
       className={cn(
-        "mt-5 flex items-start gap-3 rounded-xl p-4 transition-all duration-300",
+        "mt-4 flex items-start gap-2 rounded-xl p-3 transition-all duration-300",
         isCorrect
-          ? "bg-[#F0FDF4] border border-[#BBF7D0]"
-          : "bg-[#FEF2F2] border border-[#FECACA]"
+          ? "bg-white border-2 border-[#22C55E]"
+          : "bg-white border-2 border-[#EF4444]"
       )}
     >
       {isCorrect ? (
-        <CheckCircle2 className="w-5 h-5 text-[#16A34A] mt-0.5 flex-shrink-0" />
+        <CheckCircle2 className="w-5 h-5 text-[#475569] mt-0.5 flex-shrink-0" />
       ) : (
-        <XCircle className="w-5 h-5 text-[#DC2626] mt-0.5 flex-shrink-0" />
+        <XCircle className="w-5 h-5 text-[#475569] mt-0.5 flex-shrink-0" />
       )}
       <div className="flex-1 min-w-0">
-        <p className={cn("font-semibold", isCorrect ? "text-[#166534]" : "text-[#991B1B]")}>
+        <p className="font-semibold text-[#111827]">
           {isCorrect ? "Correct!" : "Incorrect"}
         </p>
         {!isCorrect && question.type === 'mcq' && question.correctAnswer && (
-          <p className="text-sm mt-1 text-[#991B1B]">
-            The correct answer is: <strong>{question.correctAnswer}</strong>
-          </p>
+          <div className="text-sm mt-1 text-[#111827]">
+            <p>The correct answer is:</p>
+            {correctChoice?.content ? (
+              <MathMLRenderer content={correctChoice.content} className="mt-1 font-medium" inline />
+            ) : (
+              <strong>{question.correctAnswer}</strong>
+            )}
+          </div>
         )}
         {!isCorrect && question.type === 'textentry' && question.correctAnswers && question.correctAnswers.length > 0 && (
-          <p className="text-sm mt-1 text-[#991B1B]">
+          <p className="text-sm mt-1 text-[#111827]">
             Expected answer: <strong>{question.correctAnswers.join(' / ')}</strong>
           </p>
         )}
         {isCorrect && question.correctFeedback && (
-          <MathMLRenderer content={question.correctFeedback} className={cn("text-sm mt-1.5", isCorrect ? "text-[#166534]" : "text-[#991B1B]")} />
+          <MathMLRenderer content={question.correctFeedback} className="text-sm mt-1.5" />
         )}
         {!isCorrect && question.incorrectFeedback && (
-          <MathMLRenderer content={question.incorrectFeedback} className="text-sm mt-1.5 text-[#991B1B]" />
+          <MathMLRenderer content={question.incorrectFeedback} className="text-sm mt-1.5" />
         )}
         {!question.correctFeedback && !question.incorrectFeedback && question.feedbackText && (
-          <MathMLRenderer content={question.feedbackText} className={cn("text-sm mt-1.5 opacity-90", isCorrect ? "text-[#166534]" : "text-[#991B1B]")} />
+          <MathMLRenderer content={question.feedbackText} className="text-sm mt-1.5 opacity-90" />
         )}
       </div>
     </div>
@@ -362,12 +413,13 @@ function MCQRenderer({ question }: { question: ParsedQuestion }) {
         <span className="text-xs text-[#94A3B8] font-mono">{question.identifier}</span>
       </div>
 
-      <MathMLRenderer content={question.stem} className="text-base font-semibold text-[#111827] mb-4 leading-relaxed" />
+      <MathMLRenderer content={question.stem} className="text-base font-normal text-[#111827] mb-4 leading-relaxed" />
 
       <div className="space-y-2.5">
-        {question.choices?.map((choice) => {
+        {question.choices?.map((choice, index) => {
           const isSelected = selectedAnswer === choice.identifier;
           const isCorrectChoice = choice.identifier === question.correctAnswer;
+          const choiceLabel = index < 26 ? String.fromCharCode(65 + index) : `${index + 1}`;
 
           return (
             <button
@@ -408,7 +460,7 @@ function MCQRenderer({ question }: { question: ParsedQuestion }) {
                 )}
               </div>
 
-              <span className="font-medium text-[#64748B] min-w-[20px] text-sm">{choice.identifier}.</span>
+              <span className="font-medium text-[#64748B] min-w-[20px] text-sm">{choiceLabel}.</span>
               <MathMLRenderer content={choice.content} className="text-[#111827] flex-1 text-sm" inline />
             </button>
           );
@@ -441,6 +493,12 @@ function TextEntryRenderer({ question }: { question: ParsedQuestion }) {
   const [userAnswer, setUserAnswer] = useState('');
   const [showResult, setShowResult] = useState(false);
 
+  const expectedLength = question.textEntryExpectedLength;
+  // Keep width responsive while honoring XML-provided expected length.
+  const dynamicWidth = expectedLength
+    ? `min(100%, ${Math.max(12, Math.min(expectedLength + 2, 80))}ch)`
+    : undefined;
+
   const handleCheck = () => {
     if (userAnswer.trim()) setShowResult(true);
   };
@@ -463,16 +521,18 @@ function TextEntryRenderer({ question }: { question: ParsedQuestion }) {
         <span className="text-xs text-[#94A3B8] font-mono">{question.identifier}</span>
       </div>
 
-      <MathMLRenderer content={question.stem} className="text-base font-semibold text-[#111827] mb-4 leading-relaxed" />
+      <MathMLRenderer content={question.stem} className="text-base font-normal text-[#111827] mb-4 leading-relaxed" />
 
       <input
         type="text"
         value={userAnswer}
+        size={expectedLength}
         onChange={(e) => { if (!showResult) setUserAnswer(e.target.value); }}
         onKeyDown={(e) => { if (e.key === 'Enter' && userAnswer.trim() && !showResult) handleCheck(); }}
         placeholder="Type your answer here..."
         disabled={showResult}
-        className="w-full px-4 py-3 border border-[#E2E8F0] rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[#0F6CBD] focus:border-transparent text-[#111827] text-sm transition-all duration-200 placeholder:text-[#94A3B8]"
+        style={dynamicWidth ? { width: dynamicWidth } : undefined}
+        className="max-w-full px-4 py-3 border border-[#E2E8F0] rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[#0F6CBD] focus:border-transparent text-[#111827] text-sm transition-all duration-200 placeholder:text-[#94A3B8]"
       />
 
       <div className="mt-5 flex gap-2">
@@ -939,8 +999,8 @@ export function QTIRenderer() {
 
           {/* ── Right: Preview ─────────────────────────────── */}
           <Panel defaultSize={62} minSize={35} className="flex flex-col min-w-0">
-            <Card className="flex-1 flex flex-col min-h-0 shadow-sm border-[#E2E8F0] bg-white overflow-hidden">
-              <CardContent className="flex-1 flex flex-col overflow-hidden p-0">
+            <Card className="flex-1 flex flex-col min-h-0 shadow-sm border-[#E2E8F0] bg-white overflow-y-hidden overflow-x-visible">
+              <CardContent className="flex-1 flex flex-col overflow-y-hidden overflow-x-visible p-0">
                 {/* Empty State */}
                 {!hasRendered && (
                   <div className="flex-1 flex items-center justify-center">
@@ -987,7 +1047,7 @@ export function QTIRenderer() {
 
                 {/* Questions */}
                 {hasRendered && parsedQuestions.length > 0 && (
-                  <div className="flex-1 flex flex-col overflow-hidden">
+                  <div className="flex-1 flex flex-col overflow-y-hidden overflow-x-visible">
                     {/* Navigator */}
                     <div className="px-5 pt-5 flex-shrink-0">
                       <QuestionNavigator
